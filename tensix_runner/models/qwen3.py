@@ -295,9 +295,11 @@ class Qwen3:
         x = self.prefill_layers(self.embed(self.ids(tokens)))
         last = len(tokens) - 1
         start = last // TILE * TILE
+        # a slice of the whole tensor may be the tensor itself: x is freed only after the head
         rows = ttnn.slice(x, [0, 0, start, 0], [1, 1, start + TILE, self.cfg.dim])
+        out = self.top1(rows)[last - start]
         ttnn.deallocate(x)
-        return self.top1(rows)[last - start]
+        return out
 
     def decode(self, token, pos):
         """The greedy token after token at pos."""
