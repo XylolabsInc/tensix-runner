@@ -9,6 +9,8 @@ tensix-runner check EXPORT [--host | --device] [--layers 0,1]
     torch alone (no ttnn), by default through ttnn's packer, with --device also through DRAM
 tensix-runner pcc EXPORT [--layers 0,17] [--prefill 32 --decode 2] [--greedy 8]
     device layers on transformers' inputs, and greedy tokens, against transformers on the CPU
+tensix-runner run EXPORT PROMPT [--max-new 256] [--raw] [--think]   one prompt, greedy
+tensix-runner chat EXPORT [--system TEXT]                           a conversation on the terminal
 """
 
 import argparse
@@ -139,6 +141,92 @@ def cmd_pcc(a):
     return 1 if bad else 0
 
 
+class Stream:
+    """Prints the decoded text of the tokens so far as each new token arrives."""
+
+    def __init__(self, tok, stop):
+        self.tok, self.stop, self.ids, self.shown = tok, stop, [], ""
+
+    def __call__(self, t):
+        if t in self.stop:
+            return
+        self.ids.append(t)
+        text = self.tok.decode(self.ids)
+        if not text.endswith("\ufffd"):  # wait for the rest of a multi-byte character
+            print(text[len(self.shown) :], end="", flush=True)
+            self.shown = text
+
+
+def _open_model(a):
+    from .device import info, open_device
+    from .export import Export
+    from .models import load
+
+    ex = Export(a.export)
+    dev = open_device(a.device_id)
+    print(f"device: {info(dev)}", flush=True)
+    t0 = time.monotonic()
+    model = load(ex, dev, max_seq=a.max_seq)
+    print(f"{ex.root.name} loaded in {time.monotonic() - t0:.0f} s", flush=True)
+    return ex, dev, model
+
+
+def _summary(out, t_pf, t_dec, n_prompt):
+    dec = len(out) - 1
+    rate = f", decode {dec / t_dec:.2f} tok/s" if dec and t_dec > 0 else ""
+    return f"[{n_prompt} prompt tokens in {t_pf:.2f} s, {len(out)} new{rate}; eager, no trace]"
+
+
+def cmd_run(a):
+    import ttnn
+
+    from . import generate as g
+
+    ex, dev, model = _open_model(a)
+    try:
+        tok, stop = g.tokenizer(ex), g.stop_ids(ex)
+        text = (
+            a.prompt
+            if a.raw
+            else g.chat_prompt(ex, [{"role": "user", "content": a.prompt}], thinking=a.think)
+        )
+        ids = tok.encode(text, add_special_tokens=False).ids
+        out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, Stream(tok, stop))
+        print("\n" + _summary(out, t_pf, t_dec, len(ids)), flush=True)
+    finally:
+        ttnn.close_device(dev)
+    return 0
+
+
+def cmd_chat(a):
+    import ttnn
+
+    from . import generate as g
+
+    ex, dev, model = _open_model(a)
+    msgs = [{"role": "system", "content": a.system}] if a.system else []
+    try:
+        tok, stop = g.tokenizer(ex), g.stop_ids(ex)
+        while True:
+            try:
+                line = input("> ")
+            except EOFError:
+                break
+            if not line.strip():
+                continue
+            msgs.append({"role": "user", "content": line})
+            ids = tok.encode(
+                g.chat_prompt(ex, msgs, thinking=a.think), add_special_tokens=False
+            ).ids
+            s = Stream(tok, stop)
+            out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, s)
+            print("\n" + _summary(out, t_pf, t_dec, len(ids)), flush=True)
+            msgs.append({"role": "assistant", "content": s.shown})
+    finally:
+        ttnn.close_device(dev)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="tensix-runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -167,6 +255,24 @@ def main(argv=None):
     p.add_argument("--bar", type=float, default=0.99, help="the PCC every output must reach")
     p.add_argument("--device-id", type=int, default=0)
     p.set_defaults(fn=cmd_pcc)
+    for name, fn, what in (
+        ("run", cmd_run, "one prompt, greedy, printed as it is decoded"),
+        ("chat", cmd_chat, "a conversation on the terminal (each turn prefills the whole history)"),
+    ):
+        p = sub.add_parser(name, help=what)
+        p.add_argument("export", help="the export's directory")
+        if name == "run":
+            p.add_argument("prompt")
+            p.add_argument("--raw", action="store_true", help="the prompt as is, no chat template")
+        else:
+            p.add_argument("--system", help="a system message")
+        p.add_argument(
+            "--think", action="store_true", help="the template's thinking mode, where it has one"
+        )
+        p.add_argument("--max-new", type=int, default=256)
+        p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length")
+        p.add_argument("--device-id", type=int, default=0)
+        p.set_defaults(fn=fn)
     a = ap.parse_args(argv)
     return a.fn(a)
 
