@@ -164,18 +164,20 @@ def _open_model(a):
     from .models import load
 
     ex = Export(a.export)
-    dev = open_device(a.device_id)
+    trace = getattr(a, "trace", False)
+    dev = open_device(a.device_id, trace_region_size=a.trace_mb << 20 if trace else 0)
     print(f"device: {info(dev)}", flush=True)
     t0 = time.monotonic()
-    model = load(ex, dev, max_seq=a.max_seq)
+    model = load(ex, dev, max_seq=a.max_seq, trace=trace)
     print(f"{ex.root.name} loaded in {time.monotonic() - t0:.0f} s", flush=True)
     return ex, dev, model
 
 
-def _summary(out, t_pf, t_dec, n_prompt):
+def _summary(out, t_pf, t_dec, n_prompt, trace=False):
     dec = len(out) - 1
     rate = f", decode {dec / t_dec:.2f} tok/s" if dec and t_dec > 0 else ""
-    return f"[{n_prompt} prompt tokens in {t_pf:.2f} s, {len(out)} new{rate}; eager, no trace]"
+    how = "traced decode" if trace else "eager, no trace"
+    return f"[{n_prompt} prompt tokens in {t_pf:.2f} s, {len(out)} new{rate}; {how}]"
 
 
 def cmd_run(a):
@@ -193,7 +195,7 @@ def cmd_run(a):
         )
         ids = tok.encode(text, add_special_tokens=False).ids
         out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, Stream(tok, stop))
-        print("\n" + _summary(out, t_pf, t_dec, len(ids)), flush=True)
+        print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
     finally:
         ttnn.close_device(dev)
     return 0
@@ -221,7 +223,7 @@ def cmd_chat(a):
             ).ids
             s = Stream(tok, stop)
             out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, s)
-            print("\n" + _summary(out, t_pf, t_dec, len(ids)), flush=True)
+            print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
             msgs.append({"role": "assistant", "content": s.shown})
     finally:
         ttnn.close_device(dev)
@@ -260,10 +262,19 @@ def cmd_bench(a):
                     t = model.decode(t, max(d, 1) + k)
                 rates.append(a.tg / (time.perf_counter() - t0))
             print(f"| tg{a.tg} | {d} | {statistics.mean(rates):.2f} | {a.repeat} |", flush=True)
-        print("eager (no trace); one user")
+        print(("traced decode" if a.trace else "eager (no trace)") + "; one user")
     finally:
         ttnn.close_device(dev)
     return 0
+
+
+def _trace_args(p):
+    p.add_argument(
+        "--trace",
+        action="store_true",
+        help="replay decode steps from a trace (a card only: ttsim has none; not yet run on a card)",
+    )
+    p.add_argument("--trace-mb", type=int, default=64, help="the device's trace region, MiB")
 
 
 def main(argv=None):
@@ -310,6 +321,7 @@ def main(argv=None):
         )
         p.add_argument("--max-new", type=int, default=256)
         p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length")
+        _trace_args(p)
         p.add_argument("--device-id", type=int, default=0)
         p.set_defaults(fn=fn)
     p = sub.add_parser("bench", help="pp and tg in llama-bench's form, timed on this device")
@@ -319,6 +331,7 @@ def main(argv=None):
     p.add_argument("--depth", default="0", help="tg depths, comma-separated")
     p.add_argument("--repeat", type=int, default=3)
     p.add_argument("--max-seq", type=int, default=4096, help="the KV cache's length")
+    _trace_args(p)
     p.add_argument("--device-id", type=int, default=0)
     p.set_defaults(fn=cmd_bench)
     a = ap.parse_args(argv)

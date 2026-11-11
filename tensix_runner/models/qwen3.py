@@ -176,10 +176,11 @@ class Qwen3:
     """The model on one chip. layers: the decoder layers to load (default all); the embedding, the
     final norm and the head load with head=True."""
 
-    def __init__(self, export, device, max_seq=1024, layers=None, head=True):
+    def __init__(self, export, device, max_seq=1024, layers=None, head=True, trace=False):
         import ttnn
 
         self.export, self.device, self.max_seq = export, device, max_seq
+        self.trace, self._trace = trace, None
         ops.set_arch(device)
         self.cfg = c = Config(export.text_config)
         assert max_seq % TILE == 0
@@ -227,15 +228,19 @@ class Qwen3:
 
     # the device side of one token or one prompt -------------------------------------------------
 
-    def ids(self, tokens):
-        """Token ids as uint32 [1, n] on the device (n padded to a multiple of 32 with token 0)."""
+    def ids(self, tokens, device=True):
+        """Token ids as uint32 [1, n] (n padded to a multiple of 32 with token 0), on the device or,
+        with device=False, on the host (for a copy into a traced step's input)."""
         import ttnn
 
         n = -(-len(tokens) // TILE) * TILE
         t = torch.zeros(1, n, dtype=torch.int32)
         t[0, : len(tokens)] = torch.tensor(tokens, dtype=torch.int32)
         return ttnn.from_torch(
-            t, dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=self.device
+            t,
+            dtype=ttnn.uint32,
+            layout=ttnn.ROW_MAJOR_LAYOUT,
+            device=self.device if device else None,
         )
 
     def embed(self, ids, rows=None):
@@ -249,15 +254,16 @@ class Qwen3:
             return ttnn.reshape(x, (1, 1, n, d))
         return ttnn.reshape(x, (1, 1, rows, d), (1, 1, n, d))
 
-    def position(self, pos):
+    def position(self, pos, device=True):
         """The decode position as int32 [1] (the KV cache's row) and uint32 [1, 1] (the RoPE
-        gather's index), on the device."""
+        gather's index), on the device or (device=False) on the host."""
         import ttnn
 
+        dev = self.device if device else None
         p = torch.tensor([pos], dtype=torch.int32)
-        cur = ttnn.from_torch(p, dtype=ttnn.int32, device=self.device)
+        cur = ttnn.from_torch(p, dtype=ttnn.int32, device=dev)
         idx = ttnn.from_torch(
-            p.reshape(1, 1), dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=self.device
+            p.reshape(1, 1), dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=dev
         )
         return cur, idx
 
@@ -270,23 +276,38 @@ class Qwen3:
 
     def decode_layers(self, x, pos):
         cur, idx = self.position(pos)
+        return self._decode_layers(x, cur, idx)
+
+    def _decode_layers(self, x, cur, idx):
         cos, sin = self.rope.decode(idx, self.mcs["rope"])
         for i in sorted(self.layers):
             x = self.layers[i].decode(x, cos, sin, cur, self.mcs)
         return x
 
-    def top1(self, x):
-        """The greedy token of each of x's 32 rows [1, 1, 32, dim]: the final norm, the head and
-        argmax on the device; the 32 ids are read back."""
+    def _top1(self, x):
+        """The argmax ids of x's rows [1, 1, 32, dim] on the device: the final norm, the head and
+        argmax there."""
         import ttnn
 
         h = ops.rms_norm(x, self.final_norm, self.cfg.eps)
         logits = ops.linear(h, self.head, ops.fidelity_for(self.export.head_format))
         ttnn.deallocate(h)
-        logits = ttnn.to_layout(logits, ttnn.ROW_MAJOR_LAYOUT)
-        top = ttnn.argmax(logits, dim=3)
+        rm = ttnn.to_layout(logits, ttnn.ROW_MAJOR_LAYOUT)
         ttnn.deallocate(logits)
-        return ttnn.to_torch(top).reshape(-1).tolist()
+        top = ttnn.argmax(rm, dim=3)
+        ttnn.deallocate(rm)
+        return top
+
+    def top1(self, x):
+        """The greedy token of each of x's 32 rows; only the 32 ids are read back."""
+        import ttnn
+
+        return ttnn.to_torch(self._top1(x)).reshape(-1).tolist()
+
+    def _decode_step(self, ids, cur, idx):
+        """One decode step from device inputs to the argmax ids on the device."""
+        x = self._decode_layers(self.embed(ids, rows=1), cur, idx)
+        return self._top1(x)
 
     def prefill(self, tokens):
         """The prompt's KV rows and the greedy token after it."""
@@ -302,11 +323,42 @@ class Qwen3:
         return out
 
     def decode(self, token, pos):
-        """The greedy token after token at pos."""
+        """The greedy token after token at pos (eager: ttsim runs only this)."""
         import ttnn
 
-        x = self.embed(self.ids([token]), rows=1)
-        x = self.decode_layers(x, pos)
-        out = self.top1(x)[0]
-        ttnn.deallocate(x)
+        if self.trace:
+            return self.decode_traced(token, pos)
+        top = self._decode_step(self.ids([token]), *self.position(pos))
+        out = int(ttnn.to_torch(top).reshape(-1)[0])
+        ttnn.deallocate(top)
         return out
+
+    def decode_traced(self, token, pos):
+        """decode() replayed from a trace: the first call runs the step eagerly on persistent
+        inputs (the token id, the position), then captures the same step; later calls copy the
+        new id and position into those inputs and replay. Needs a card (ttsim has no traces) and
+        a device opened with a trace region. Not yet run on a card."""
+        import ttnn
+
+        host = (self.ids([token], device=False), *self.position(pos, device=False))
+        if self._trace is None:
+            self._trace_in = [ttnn.to_device(h, self.device) for h in host]
+            top = self._decode_step(*self._trace_in)
+            out = int(ttnn.to_torch(top).reshape(-1)[0])
+            ttnn.deallocate(top)
+            tid = ttnn.begin_trace_capture(self.device, cq_id=0)
+            self._trace_out = self._decode_step(*self._trace_in)
+            ttnn.end_trace_capture(self.device, tid, cq_id=0)
+            self._trace = tid
+            return out
+        for h, d in zip(host, self._trace_in):
+            ttnn.copy_host_to_device_tensor(h, d)
+        ttnn.execute_trace(self.device, self._trace, cq_id=0, blocking=False)
+        return int(ttnn.to_torch(self._trace_out).reshape(-1)[0])
+
+    def release_trace(self):
+        import ttnn
+
+        if self._trace is not None:
+            ttnn.release_trace(self.device, self._trace)
+        self._trace = None
