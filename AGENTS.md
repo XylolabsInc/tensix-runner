@@ -17,9 +17,10 @@ Wormhole and Blackhole, through upstream ttnn. The README covers installing, che
 | `tensix_runner/bfp.py` | the BFP grids in torch, for checks without ttnn |
 | `tensix_runner/weights.py` | packing at the export's format with `ttnn.as_tensor`, and the exactness check |
 | `tensix_runner/device.py` | opening a chip; its arch, grid, DRAM banks and L1, read from the device |
-| `tensix_runner/ops.py`, `rope.py` | compute configs, matrices, RMSNorm, SwiGLU; HF-style RoPE tables on the device |
-| `tensix_runner/models/` | one module per family (`qwen3.py`), chosen by the checkpoint's `model_type` |
-| `tensix_runner/generate.py` | the chat template (Jinja2, as transformers renders it), stop tokens, the greedy loop |
+| `tensix_runner/ops.py`, `rope.py` | compute configs, matrices, RMSNorm, the gated MLPs (SiLU, GELU tanh); HF-style RoPE tables on the device |
+| `tensix_runner/kv.py` | the paged KV cache of an attention layer |
+| `tensix_runner/models/` | one module per family (`qwen3.py`, `qwen35.py`, `gemma4.py`), chosen by the checkpoint's `model_type` |
+| `tensix_runner/generate.py` | the chat template (Jinja2, as transformers renders it), stop tokens, the greedy and MTP-drafted loops |
 | `tensix_runner/pcc.py` | layer and greedy-token checks against transformers on the same export |
 | `tensix_runner/cli.py` | `tensix-runner download`, `info`, `check`, `pcc`, `run`, `chat`, `bench` |
 | `scripts/` | `install.sh` (venv, ttnn, SFPI, ttsim), `ttsim.sh` (the simulator's environment), `download.sh` |
