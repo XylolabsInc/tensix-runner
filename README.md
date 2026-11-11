@@ -30,9 +30,10 @@ v0.81.1 and needs only the `ttnn` wheel. Not affiliated with or endorsed by Tens
 | Loading an export, every matrix packed exactly | Blackhole and Wormhole |
 | Qwen3 dense (4B, 8B) | Blackhole and Wormhole: layers match transformers (below) |
 | Qwen3.5 (4B, 9B: Gated DeltaNet, gated attention) | Blackhole: layers match transformers; Wormhole not yet (ttnn's Gated Delta Rule ops stop on ttsim's Wormhole) |
-| Qwen3.5's MTP drafting on the device | Blackhole: drafts and verifies; the tokens equal plain greedy decoding on a 4-layer check, whose drafts the model never accepts, so acceptance is not measured yet |
+| Qwen3.5's MTP drafting on the device | Blackhole: the MTP module matches one built from transformers' parts (below); speculative tokens equal plain greedy decoding on a 4-layer check; acceptance on a whole model not measured yet |
 | Gemma 4 (E2B, E4B: per-layer inputs, sliding and full attention, KV sharing across layers) | Blackhole and Wormhole: layers match transformers (below) |
 | `run`, `chat`, `bench` | work; decode is eager by default, `--trace` replays it from a trace on a card |
+| [tensix-kernels](https://github.com/XylolabsInc/tensix-kernels) (optional): its dense reader for every matrix, its device head | Blackhole and Wormhole (below) |
 
 Nothing here has run on a Tenstorrent card yet. Every result comes from
 [ttsim](https://github.com/tenstorrent/ttsim) v1.16.0, Tenstorrent's functional simulator, and this
@@ -54,6 +55,12 @@ README gives no speeds. ttsim has no traces, so `--trace` has not run anywhere y
 - **Through the whole depth** (`--drift`): in one prefill on the Blackhole, every one of Gemma 4
   E2B's 35 layer outputs stays at PCC 0.99986 or more against transformers' float32 run, about
   where transformers' own bf16 run stays (0.99987).
+- **Qwen3.5's MTP** (`--mtp`): transformers does not run the MTP module, so the check builds it
+  from transformers' parts as vLLM defines it; on the Blackhole the device MTP's rows reach PCC
+  0.99995 or more and its drafts equal the reference's on a 32-row prompt but for one bf16 tie.
+- **With tensix-kernels** (`--kernels`): the layer checks at PCC 0.99994 or more (Qwen3-4B and
+  Gemma 4 E2B on both chips, Qwen3-8B and Gemma 4 E4B on the Wormhole, Qwen3.5-4B on the
+  Blackhole), and every greedy step equal for Gemma 4 E2B on both chips with the kernels' head.
 
 ## Install
 
@@ -104,6 +111,21 @@ tensix-runner bench exports/Qwen3-4B-Tensix-BFP4 --pp 512 --tg 128 --depth 0
 template has it) and decode greedily, with the argmax on the device. `bench` times prefill (`pp`)
 and decode (`tg`) in llama-bench's terms on the device you run it on. `--trace` on any of them
 replays the decode step from a trace (a card only).
+
+## Kernels (optional)
+
+```
+tensix-runner run exports/gemma-4-E2B-it-Tensix-BFP4-MLP "Hello" --kernels ../tensix-kernels
+export TENSIX_KERNELS=../tensix-kernels      # the same for every command
+```
+
+With a [tensix-kernels](https://github.com/XylolabsInc/tensix-kernels) checkout, every matrix is
+stored once, DRAM width-sharded, and its weight-streaming dense reader runs it, and the head is its
+device head: the top-k over the bf16 head's vocabulary blocks, then on the device an exact rescore
+of the best 16 candidates (float32 sums) and the pick. Only token ids come back. On ttsim's
+Blackhole the dense reader gives `ttnn.linear`'s output bit for bit; on the Wormhole it
+accumulates in fp32 where `ttnn.linear` accumulates in bf16 here, so its layer outputs match the
+Blackhole's. `--trace` does not take the kernels' head yet.
 
 ## Compare with transformers
 
