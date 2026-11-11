@@ -4,8 +4,8 @@
 
 Each decoder layer: RMSNorm, attention with grouped KV heads, a per-head RMSNorm on q and k
 (q_norm, k_norm) and HF-style RoPE, then RMSNorm and a SwiGLU MLP, each with its residual add.
-q, k and v are one matrix ([q | k | v] along the output, whole tiles: exact). The KV cache is one
-bf16 tensor per layer, [1, kv_heads, max_seq, head_dim].
+q, k and v are one matrix ([q | k | v] along the output, whole tiles: exact). The KV cache is paged
+(kv.PagedKV), bf16, one per layer.
 
 Prefill takes the prompt from position 0 in one pass (its length padded to a multiple of 32);
 decode takes one token at a position. Both run eagerly here; the embedding lookup, the RoPE rows,
@@ -16,6 +16,7 @@ import math
 import torch
 
 from .. import ops
+from ..kv import PagedKV
 from ..rope import HfRope
 
 TILE = 32
@@ -23,8 +24,6 @@ TILE = 32
 
 class Qwen3Layer:
     def __init__(self, model, i):
-        import ttnn
-
         ex, dev, c = model.export, model.device, model.cfg
         self.model, self.i = model, i
         p = f"{ex.prefix}layers.{i}."
@@ -51,10 +50,7 @@ class Qwen3Layer:
             g(p + "mlp.down_proj.weight"),
             [fmt(f"mlp.{n}_proj") for n in ("gate", "up", "down")],
         )
-        shape = [1, c.kv_heads, model.max_seq, c.head_dim]
-        kw = {"dtype": ttnn.bfloat16, "layout": ttnn.TILE_LAYOUT, "device": dev}
-        self.k_cache = ttnn.zeros(shape, memory_config=ttnn.DRAM_MEMORY_CONFIG, **kw)
-        self.v_cache = ttnn.zeros(shape, memory_config=ttnn.DRAM_MEMORY_CONFIG, **kw)
+        self.kv = PagedKV(dev, c.kv_heads, c.head_dim, model.max_seq)
 
     def _head_norm(self, x, w, decode):
         """q_norm or k_norm over each head's head_dim (decode heads are height sharded)."""
@@ -89,8 +85,7 @@ class Qwen3Layer:
         k = self._head_norm(k, self.k_norm, False)
         q = ttnn.experimental.rotary_embedding_hf(q, cos, sin, is_decode_mode=False)
         k = ttnn.experimental.rotary_embedding_hf(k, cos, sin, is_decode_mode=False)
-        ttnn.fill_cache(self.k_cache, k, 0)
-        ttnn.fill_cache(self.v_cache, v, 0)
+        self.kv.fill(k, v)
         a = ttnn.transformer.scaled_dot_product_attention(
             q,
             k,
@@ -122,19 +117,10 @@ class Qwen3Layer:
         k = self._head_norm(k, self.k_norm, True)
         q = ttnn.experimental.rotary_embedding_hf(q, cos, sin, is_decode_mode=True)
         k = ttnn.experimental.rotary_embedding_hf(k, cos, sin, is_decode_mode=True)
-        ttnn.experimental.paged_update_cache(self.k_cache, k, update_idxs_tensor=pos)
-        ttnn.experimental.paged_update_cache(self.v_cache, v, update_idxs_tensor=pos)
+        self.kv.update(k, v, pos)
         ttnn.deallocate(k)
         ttnn.deallocate(v)
-        a = ttnn.transformer.scaled_dot_product_attention_decode(
-            q,
-            self.k_cache,
-            self.v_cache,
-            cur_pos_tensor=pos,
-            scale=1.0 / math.sqrt(c.head_dim),
-            compute_kernel_config=ops.compute_config("hifi4"),
-            memory_config=ttnn.DRAM_MEMORY_CONFIG,
-        )
+        a = self.kv.attend(q, pos, 1.0 / math.sqrt(c.head_dim), ops.compute_config("hifi4"))
         ttnn.deallocate(q)
         a = ttnn.to_memory_config(a, mcs["sdpa_out"])
         o = ttnn.experimental.nlp_concat_heads_decode(a, num_heads=c.heads)

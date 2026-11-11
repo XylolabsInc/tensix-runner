@@ -22,6 +22,7 @@ import math
 import torch
 
 from .. import ops
+from ..kv import PagedKV
 from ..rope import HfRope, inv_freq
 from .qwen3 import TILE
 
@@ -112,8 +113,6 @@ class Qwen35Rope(HfRope):
 
 class GatedAttention:
     def __init__(self, model, i):
-        import ttnn
-
         ex, dev, c = model.export, model.device, model.cfg
         self.model = model
         p = f"{ex.prefix}layers.{i}.self_attn."
@@ -130,10 +129,7 @@ class GatedAttention:
         self.wo = ops.matrix(dev, ex.get(p + "o_proj.weight"), self.o_fmt)
         self.q_norm = ops.norm_weight(dev, ex.get(p + "q_norm.weight")[perm], 1.0)
         self.k_norm = ops.norm_weight(dev, ex.get(p + "k_norm.weight")[perm], 1.0)
-        shape = [1, c.kv_heads, model.max_seq, d]
-        kw = {"dtype": ttnn.bfloat16, "layout": ttnn.TILE_LAYOUT, "device": dev}
-        self.k_cache = ttnn.zeros(shape, memory_config=ttnn.DRAM_MEMORY_CONFIG, **kw)
-        self.v_cache = ttnn.zeros(shape, memory_config=ttnn.DRAM_MEMORY_CONFIG, **kw)
+        self.kv = PagedKV(dev, c.kv_heads, d, model.max_seq)
 
     def _head_norm(self, x, w, decode):
         import ttnn
@@ -177,8 +173,7 @@ class GatedAttention:
         k = ttnn.experimental.rotary_embedding_hf(
             self._head_norm(k, self.k_norm, False), cos, sin, is_decode_mode=False
         )
-        ttnn.fill_cache(self.k_cache, k, 0)
-        ttnn.fill_cache(self.v_cache, v, 0)
+        self.kv.fill(k, v)
         a = ttnn.transformer.scaled_dot_product_attention(
             q,
             k,
@@ -209,19 +204,10 @@ class GatedAttention:
         k = ttnn.experimental.rotary_embedding_hf(
             self._head_norm(k, self.k_norm, True), cos, sin, is_decode_mode=True
         )
-        ttnn.experimental.paged_update_cache(self.k_cache, k, update_idxs_tensor=pos)
-        ttnn.experimental.paged_update_cache(self.v_cache, v, update_idxs_tensor=pos)
+        self.kv.update(k, v, pos)
         ttnn.deallocate(k)
         ttnn.deallocate(v)
-        a = ttnn.transformer.scaled_dot_product_attention_decode(
-            q,
-            self.k_cache,
-            self.v_cache,
-            cur_pos_tensor=pos,
-            scale=1.0 / math.sqrt(c.head_dim),
-            compute_kernel_config=ops.compute_config("hifi4"),
-            memory_config=ttnn.DRAM_MEMORY_CONFIG,
-        )
+        a = self.kv.attend(q, pos, 1.0 / math.sqrt(c.head_dim), ops.compute_config("hifi4"))
         ttnn.deallocate(q)
         a = ttnn.to_memory_config(a, mcs["sdpa_out"])
         o = ttnn.experimental.nlp_concat_heads_decode(a, num_heads=c.heads)
