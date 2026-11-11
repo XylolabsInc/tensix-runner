@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Xylolabs
+"""Small building blocks on ttnn shared by the models: compute configs, matrices, norms and the MLP."""
+
+import torch
+
+from . import weights
+
+TILE = 32
+
+
+# Wormhole's source registers hold 19 bits, so a matmul that reloads fp32 partial sums into them is
+# undefined there (ttsim's Wormhole stops on it); matmuls on Wormhole accumulate in bf16 instead
+_ARCH = {"wormhole": False}
+
+
+def set_arch(device):
+    """Record the device's architecture for compute_config (called once per model load)."""
+    import ttnn
+
+    _ARCH["wormhole"] = device.arch() == ttnn.device.Arch.WORMHOLE_B0
+
+
+def compute_config(fidelity="hifi4", matmul=False):
+    """A compute config without approximations: fp32 accumulation, except for matmuls on
+    Wormhole (see _ARCH)."""
+    import ttnn
+
+    f = {
+        "lofi": ttnn.MathFidelity.LoFi,
+        "hifi2": ttnn.MathFidelity.HiFi2,
+        "hifi4": ttnn.MathFidelity.HiFi4,
+    }[fidelity]
+    fp32 = not (matmul and _ARCH["wormhole"])
+    return ttnn.WormholeComputeKernelConfig(
+        math_fidelity=f, math_approx_mode=False, fp32_dest_acc_en=fp32, packer_l1_acc=True
+    )
+
+
+def matrix(device, w, fmt):
+    """A PyTorch [out, in] weight on the device as [in, out] at fmt, in DRAM (packed exactly)."""
+    import ttnn
+
+    return ttnn.to_device(weights.pack(w, fmt), device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+
+
+def norm_weight(device, w):
+    """An RMSNorm weight [dim] in the form ttnn.rms_norm reads: bf16 rows of 32, row major."""
+    import ttnn
+
+    dim = w.shape[-1]
+    assert dim % TILE == 0, f"norm width {dim} is not a multiple of {TILE}"
+    return ttnn.as_tensor(
+        w.to(torch.bfloat16).reshape(1, 1, dim // TILE, TILE),
+        dtype=ttnn.bfloat16,
+        layout=ttnn.ROW_MAJOR_LAYOUT,
+        device=device,
+        memory_config=ttnn.DRAM_MEMORY_CONFIG,
+    )
+
+
+def rms_norm(x, w, eps, mc=None):
+    import ttnn
+
+    return ttnn.rms_norm(
+        x,
+        epsilon=eps,
+        weight=w,
+        compute_kernel_config=compute_config("hifi4"),
+        memory_config=mc or ttnn.DRAM_MEMORY_CONFIG,
+    )
+
+
+def linear(x, w, fidelity="hifi4", mc=None):
+    import ttnn
+
+    return ttnn.linear(
+        x,
+        w,
+        compute_kernel_config=compute_config(fidelity, matmul=True),
+        memory_config=mc or ttnn.DRAM_MEMORY_CONFIG,
+    )
+
+
+def fidelity_for(fmt):
+    """The matmul fidelity that keeps a weight format's products exact enough: HiFi2 covers
+    BFP4's 4-bit mantissas, HiFi4 the wider ones."""
+    return "hifi2" if fmt == "bfp4" else "hifi4"
+
+
+class SwiGLU:
+    """gate, up and down: down(silu(gate(x)) * up(x))."""
+
+    def __init__(self, device, gate, up, down, fmts):
+        self.fmts = fmts
+        self.gate = matrix(device, gate, fmts[0])
+        self.up = matrix(device, up, fmts[1])
+        self.down = matrix(device, down, fmts[2])
+
+    def __call__(self, x):
+        import ttnn
+
+        g = linear(x, self.gate, fidelity_for(self.fmts[0]))
+        u = linear(x, self.up, fidelity_for(self.fmts[1]))
+        a = ttnn.multiply(g, u, input_tensor_a_activations=[ttnn.UnaryOpType.SILU])
+        ttnn.deallocate(g)
+        ttnn.deallocate(u)
+        y = linear(a, self.down, fidelity_for(self.fmts[2]))
+        ttnn.deallocate(a)
+        return y
