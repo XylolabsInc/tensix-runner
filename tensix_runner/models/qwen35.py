@@ -24,7 +24,7 @@ import torch
 from .. import ops
 from ..kv import PagedKV
 from ..rope import HfRope, inv_freq
-from .qwen3 import TILE
+from .qwen3 import TILE, head_for
 
 GDN, ATTN = "linear_attention", "full_attention"
 
@@ -550,7 +550,7 @@ class Qwen35:
         self.layers = {i: Qwen35Layer(self, i) for i in ids}
         self._mcs = {}
         self.mcs = Qwen3.decode_configs(self, 1)
-        self.head = None
+        self.head = self.khead = None
         if head:
             ex = export
             self.embedding = ttnn.as_tensor(
@@ -561,7 +561,7 @@ class Qwen35:
                 memory_config=ttnn.DRAM_MEMORY_CONFIG,
             )
             self.final_norm = ops.norm_weight(device, ex.get(f"{ex.prefix}norm.weight"), 1.0)
-            self.head = ops.matrix(device, ex.get(ex.head_name), ex.head_format)
+            self.head, self.khead = head_for(self, ex, device)
 
     def prefill_layers(self, x, n=None):
         cos, sin = self.rope.prefill(0, x.shape[-2])

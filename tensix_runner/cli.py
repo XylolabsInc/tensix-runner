@@ -15,6 +15,7 @@ tensix-runner bench EXPORT [--pp 512] [--tg 128] [--depth 0]        llama-bench'
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -321,6 +322,15 @@ def cmd_bench(a):
     return 0
 
 
+def _kernel_args(p):
+    p.add_argument(
+        "--kernels",
+        metavar="PATH",
+        default=os.environ.get("TENSIX_KERNELS"),
+        help="a tensix-kernels checkout: its dense reader runs the matrices (default: $TENSIX_KERNELS, else off)",
+    )
+
+
 def _trace_args(p):
     p.add_argument(
         "--trace",
@@ -391,6 +401,7 @@ def main(argv=None):
     )
     p.add_argument("--bar", type=float, default=0.99, help="the PCC every output must reach")
     p.add_argument("--device-id", type=int, default=0)
+    _kernel_args(p)
     p.set_defaults(fn=cmd_pcc)
     for name, fn, what in (
         ("run", cmd_run, "one prompt, greedy, printed as it is decoded"),
@@ -410,6 +421,7 @@ def main(argv=None):
         p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length")
         _trace_args(p)
         p.add_argument("--device-id", type=int, default=0)
+        _kernel_args(p)
         p.set_defaults(fn=fn)
     p = sub.add_parser("bench", help="pp and tg in llama-bench's form, timed on this device")
     p.add_argument("export", help="the export's directory")
@@ -420,8 +432,14 @@ def main(argv=None):
     p.add_argument("--max-seq", type=int, default=4096, help="the KV cache's length")
     _trace_args(p)
     p.add_argument("--device-id", type=int, default=0)
+    _kernel_args(p)
     p.set_defaults(fn=cmd_bench)
     a = ap.parse_args(argv)
+    if getattr(a, "kernels", None):
+        from . import kernels
+
+        kernels.enable(a.kernels)
+        print(f"kernels: the dense reader from {kernels.where()}", flush=True)
     return a.fn(a)
 
 

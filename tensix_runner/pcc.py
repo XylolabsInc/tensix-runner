@@ -275,7 +275,7 @@ def check_mtp(model, mtp, tokens, n, log=print):
     difference, equal rows, ties, other differences)."""
     import ttnn
 
-    assert 1 < n <= 32 and n + 1 <= len(tokens)
+    assert 1 < n <= (8 if model.khead is not None else 32) and n + 1 <= len(tokens)
     h, want_y, logits = mtp_reference(model.export, tokens, n)
     t0 = time.monotonic()
     y, _ = mtp.rows(to_device(model.device, h), tokens[1 : n + 1], 0)

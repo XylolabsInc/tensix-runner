@@ -4,7 +4,7 @@
 
 import torch
 
-from . import weights
+from . import kernels, weights
 
 TILE = 32
 
@@ -53,10 +53,14 @@ def sdpa_config(device, k_chunk=32):
     )
 
 
-def matrix(device, w, fmt):
-    """A PyTorch [out, in] weight on the device as [in, out] at fmt, in DRAM (packed exactly)."""
+def matrix(device, w, fmt, kernel=True):
+    """A PyTorch [out, in] weight on the device as [in, out] at fmt, in DRAM (packed exactly): a
+    dense-reader weight when the tensix-kernels path is on (kernels.py) and kernel is True, else a
+    ttnn tensor."""
     import ttnn
 
+    if kernel and kernels.enabled():
+        return kernels.Weight(device, w, fmt)
     return ttnn.to_device(weights.pack(w, fmt), device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
 
 
@@ -91,6 +95,8 @@ def rms_norm(x, w, eps, mc=None):
 def linear(x, w, fidelity="hifi4", mc=None):
     import ttnn
 
+    if isinstance(w, kernels.Weight):
+        return w(x, fidelity, mc or ttnn.DRAM_MEMORY_CONFIG)
     return ttnn.linear(
         x,
         w,

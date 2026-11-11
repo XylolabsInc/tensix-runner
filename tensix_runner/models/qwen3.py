@@ -15,7 +15,7 @@ import math
 
 import torch
 
-from .. import ops
+from .. import kernels, ops
 from ..kv import PagedKV
 from ..rope import HfRope
 
@@ -162,6 +162,16 @@ class Config:
         self.vocab = tc["vocab_size"]
 
 
+def head_for(model, ex, device):
+    """(the head as a ttnn matrix, None), or with the kernels on (None, kernels.Head), which takes
+    its rows from the embedding table when the head is the embedding."""
+    w = ex.get(ex.head_name)
+    if not kernels.enabled():
+        return ops.matrix(device, w, ex.head_format, kernel=False), None
+    tied = ex.head_name == ex.embed_name or torch.equal(w, ex.get(ex.embed_name))
+    return None, kernels.Head(device, w, model.embedding if tied else None)
+
+
 class Qwen3:
     """The model on one chip. layers: the decoder layers to load (default all); the embedding, the
     final norm and the head load with head=True."""
@@ -179,7 +189,7 @@ class Qwen3:
         self.layers = {i: Qwen3Layer(self, i) for i in ids}
         self._mcs = {}
         self.mcs = self.decode_configs(1)
-        self.head = None
+        self.head = self.khead = None
         if head:
             ex = export
             self.embedding = ttnn.as_tensor(
@@ -190,7 +200,7 @@ class Qwen3:
                 memory_config=ttnn.DRAM_MEMORY_CONFIG,
             )
             self.final_norm = ops.norm_weight(device, ex.get(f"{ex.prefix}norm.weight"))
-            self.head = ops.matrix(device, ex.get(ex.head_name), ex.head_format)
+            self.head, self.khead = head_for(self, ex, device)
 
     def decode_configs(self, users=1):
         """The decode heads' height-sharded layouts for `users` rows (one decode row, or a
@@ -320,10 +330,12 @@ class Qwen3:
         return top
 
     def greedy_normed(self, h, rows):
-        """The greedy ids of h's first rows (normed), read back: the head and argmax on the
-        device. Only the ids come back."""
+        """The greedy ids of h's first rows (normed), read back: the kernels' head when it is on
+        (kernels.Head), else the head and argmax on the device. Only the ids come back."""
         import ttnn
 
+        if self.khead is not None:
+            return self.khead(h, rows)
         top = self._head_top1(h)
         out = ttnn.to_torch(top).reshape(-1)[:rows].tolist()
         ttnn.deallocate(top)
@@ -361,6 +373,11 @@ class Qwen3:
 
         if self.trace:
             return self.decode_traced(token, pos)
+        if self.khead is not None:
+            x = self._decode_layers(self.embed(self.ids([token]), rows=1), *self.position(pos))
+            out = self.greedy(x, 1)[0]
+            ttnn.deallocate(x)
+            return out
         top = self._decode_step(self.ids([token]), *self.position(pos))
         out = int(ttnn.to_torch(top).reshape(-1)[0])
         ttnn.deallocate(top)
@@ -373,6 +390,8 @@ class Qwen3:
         a device opened with a trace region. Not yet run on a card."""
         import ttnn
 
+        if self.khead is not None:
+            raise NotImplementedError("--trace with --kernels: the kernels' head is not traced yet")
         host = (self.ids([token], device=False), *self.position(pos, device=False))
         if self._trace is None:
             self._trace_in = [ttnn.to_device(h, self.device) for h in host]

@@ -29,7 +29,7 @@ import torch
 from .. import ops
 from ..kv import PagedKV
 from ..rope import HfRope, inv_freq
-from .qwen3 import TILE, Qwen3
+from .qwen3 import TILE, Qwen3, head_for
 
 SLIDING, FULL = "sliding_attention", "full_attention"
 
@@ -331,10 +331,10 @@ class Gemma4(Qwen3):
         self.ple_tables = {i: table(tab[:, i * d : (i + 1) * d]) for i in ids}
         self.ple_w = {i: ops.matrix(device, proj[i * d : (i + 1) * d], "bf16") for i in ids}
         self.ple_norm = ops.norm_weight(device, ex.get(f"{p}per_layer_projection_norm.weight"))
-        self.head = None
+        self.head = self.khead = None
         if head:
             self.final_norm = ops.norm_weight(device, ex.get(f"{p}norm.weight"))
-            self.head = ops.matrix(device, ex.get(ex.head_name), ex.head_format)
+            self.head, self.khead = head_for(self, ex, device)
 
     def kv_source(self, i):
         return self.cfg.source(i)
