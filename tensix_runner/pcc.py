@@ -20,26 +20,40 @@ def pcc(a, b):
 
 
 def prompt_tokens(export, n):
-    """The first n tokens of a fixed English text, from the export's tokenizer."""
-    from tokenizers import Tokenizer
+    """The first n tokens of a fixed English text, from the export's tokenizer, after the BOS token
+    where the chat template starts with one (Gemma)."""
+    from . import generate
 
-    tok = Tokenizer.from_file(str(export.root / "tokenizer.json"))
+    tok = generate.tokenizer(export)
     text = (
         "The Tensix core pairs five small RISC-V processors with a matrix engine and a vector "
         "engine. Data moves between cores over two networks on chip, and each core keeps its "
         "working set in about one and a half megabytes of local SRAM. Large models stream their "
         "weights from DRAM for every token, so decode speed is set by memory bandwidth."
     )
-    ids = tok.encode(text).ids
+    ids = generate.template_bos(export, tok) + tok.encode(text).ids
     assert len(ids) >= n, f"the text has {len(ids)} tokens, fewer than {n}"
     return ids[:n]
 
 
-def reference(export, tokens, layers):
-    """{layer: (input [n, dim], output [n, dim])} from transformers in float32 on the CPU."""
-    from transformers import AutoModelForCausalLM
+def _hf_model(export, overrides=None):
+    """The export in transformers, float32 on the CPU; overrides: text config values to change."""
+    from transformers import AutoConfig, AutoModelForCausalLM
 
-    m = AutoModelForCausalLM.from_pretrained(str(export.root), dtype=torch.float32)
+    kw = {}
+    if overrides:
+        cfg = AutoConfig.from_pretrained(str(export.root))
+        tc = getattr(cfg, "text_config", cfg)
+        for k, v in overrides.items():
+            setattr(tc, k, v)
+        kw["config"] = cfg
+    return AutoModelForCausalLM.from_pretrained(str(export.root), dtype=torch.float32, **kw)
+
+
+def reference(export, tokens, layers, overrides=None):
+    """{layer: (input [n, dim], output [n, dim], per-layer input [n, d] or None)} from
+    transformers in float32 on the CPU. overrides: text config values to change (pcc's --window)."""
+    m = _hf_model(export, overrides)
     m.eval()
     rec = {}
     # the decoder layers: model.layers (text models) or model.language_model.layers (multimodal)
@@ -49,8 +63,15 @@ def reference(export, tokens, layers):
     def hook(i):
         def f(mod, args, kwargs, out):
             x = kwargs.get("hidden_states", args[0] if args else None)
+            # Gemma 4's layers take their per-layer input second
+            ple = args[1] if len(args) > 1 and torch.is_tensor(args[1]) else None
+            ple = kwargs.get("per_layer_input", ple)
             y = out[0] if isinstance(out, tuple) else out
-            rec[i] = (x[0].detach().clone(), y[0].detach().clone())
+            rec[i] = (
+                x[0].detach().clone(),
+                y[0].detach().clone(),
+                None if ple is None else ple[0].detach().clone(),
+            )
 
         return f
 
@@ -62,11 +83,9 @@ def reference(export, tokens, layers):
     return rec
 
 
-def greedy_reference(export, tokens, n):
+def greedy_reference(export, tokens, n, overrides=None):
     """transformers' greedy continuation (n tokens) in float32 on the CPU."""
-    from transformers import AutoModelForCausalLM
-
-    m = AutoModelForCausalLM.from_pretrained(str(export.root), dtype=torch.float32)
+    m = _hf_model(export, overrides)
     with torch.no_grad():
         out = m.generate(torch.tensor([tokens]), max_new_tokens=n, do_sample=False)
     return out[0, len(tokens) :].tolist()
@@ -88,38 +107,41 @@ def to_device(device, rows, logical=None):
     return x
 
 
-def check_layers(model, tokens, prefill_n, layers, log=print):
+def check_layers(model, tokens, prefill_n, layers, log=print, overrides=None):
     """Each layer on the reference's inputs: prefill of the first prefill_n positions (a multiple
-    of 32), then decode of every later position. Returns {(layer, "prefill" or position): (pcc,
-    largest difference)}."""
+    of 32), then decode of every later position. A layer that attends over an earlier layer's KV
+    cache runs after that layer, which is checked too. Returns {(layer, "prefill" or position or
+    "per-layer input"): (pcc, largest difference)}."""
     import ttnn
 
-    ref = reference(model.export, tokens, layers)
+    run = sorted(set(layers) | {model.kv_source(i) for i in layers})
+    ref = reference(model.export, tokens, run, overrides)
     out = {}
-    for i in layers:
-        layer = model.layers[i]
-        x, y = ref[i]
-        t0 = time.monotonic()
-        cos, sin = model.rope.prefill(0, prefill_n)
-        got = ttnn.to_torch(layer.prefill(to_device(model.device, x[:prefill_n]), cos, sin))
-        got = got.reshape(-1, got.shape[-1])[:prefill_n].float()
-        out[(i, "prefill")] = (pcc(got, y[:prefill_n]), float((got - y[:prefill_n]).abs().max()))
+
+    def record(key, got, want, t0, what):
+        out[key] = (pcc(got, want), float((got - want).abs().max()))
         log(
-            f"layer {i} prefill {prefill_n}: pcc {out[(i, 'prefill')][0]:.6f}, "
-            f"max diff {out[(i, 'prefill')][1]:.4g} ({time.monotonic() - t0:.0f} s)"
+            f"layer {key[0]} {what}: pcc {out[key][0]:.6f}, max diff {out[key][1]:.4g} "
+            f"({time.monotonic() - t0:.0f} s)"
         )
+
+    for i in run:
+        x, y, ple = ref[i]
+        if ple is not None:
+            t0 = time.monotonic()
+            got = model.per_layer_input(i, tokens[:prefill_n])
+            record((i, "per-layer input"), got, ple[:prefill_n], t0, "per-layer input")
+        t0 = time.monotonic()
+        got = model.check_prefill(i, to_device(model.device, x[:prefill_n]), tokens[:prefill_n])
+        got = ttnn.to_torch(got)
+        got = got.reshape(-1, got.shape[-1])[:prefill_n].float()
+        record((i, "prefill"), got, y[:prefill_n], t0, f"prefill {prefill_n}")
         for p in range(prefill_n, len(tokens)):
             t0 = time.monotonic()
-            cur, idx = model.position(p)
-            cos, sin = model.rope.decode(idx, model.mcs["rope"])
             xd = to_device(model.device, x[p : p + 1], logical=1)
-            got = ttnn.to_torch(layer.decode(xd, cos, sin, cur, model.mcs))
+            got = ttnn.to_torch(model.check_decode(i, xd, tokens[p], p))
             got = got.reshape(-1, got.shape[-1])[:1].float()
-            out[(i, p)] = (pcc(got, y[p : p + 1]), float((got - y[p : p + 1]).abs().max()))
-            log(
-                f"layer {i} decode at {p}: pcc {out[(i, p)][0]:.6f}, "
-                f"max diff {out[(i, p)][1]:.4g} ({time.monotonic() - t0:.0f} s)"
-            )
+            record((i, p), got, y[p : p + 1], t0, f"decode at {p}")
     return out
 
 

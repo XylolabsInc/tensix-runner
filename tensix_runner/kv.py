@@ -85,9 +85,9 @@ class PagedKV:
         for i in idx:
             ttnn.deallocate(i)
 
-    def attend(self, q, pos, scale, ckc, users=1):
+    def attend(self, q, pos, scale, ckc, users=1, window=None):
         """Decode attention of q [1, users, heads (32), head_dim] over each user's positions up to
-        and including its own in pos."""
+        and including its own in pos (with window, only the last window of them)."""
         import ttnn
 
         return ttnn.transformer.paged_scaled_dot_product_attention_decode(
@@ -98,5 +98,6 @@ class PagedKV:
             cur_pos_tensor=pos,
             scale=scale,
             compute_kernel_config=ckc,
+            sliding_window_size=window,
             memory_config=ttnn.DRAM_MEMORY_CONFIG,
         )

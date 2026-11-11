@@ -103,12 +103,36 @@ class SwiGLU:
 
         g = linear(x, self.gate, fidelity_for(self.fmts[0]))
         u = linear(x, self.up, fidelity_for(self.fmts[1]))
-        a = ttnn.multiply(g, u, input_tensor_a_activations=[ttnn.UnaryOpType.SILU])
+        a = self._gated(g, u)
         ttnn.deallocate(g)
         ttnn.deallocate(u)
         y = linear(a, self.down, fidelity_for(self.fmts[2]))
         ttnn.deallocate(a)
         return y
+
+    def _gated(self, g, u):
+        import ttnn
+
+        return ttnn.multiply(g, u, input_tensor_a_activations=[ttnn.UnaryOpType.SILU])
+
+
+class GeluTanhMLP(SwiGLU):
+    """down(gelu(gate(x)) * up(x)) with GELU's tanh form (transformers' gelu_pytorch_tanh)."""
+
+    def _gated(self, g, u):
+        import ttnn
+
+        a = gelu_tanh(g)
+        out = ttnn.multiply(a, u)
+        ttnn.deallocate(a)
+        return out
+
+
+def gelu_tanh(x):
+    """0.5 x (1 + tanh(sqrt(2 / pi) (x + 0.044715 x^3))), as torch's gelu(approximate="tanh")."""
+    import ttnn
+
+    return ttnn.gelu(x, variant=ttnn.GeluVariant.Tanh)
 
 
 def rows(t, n):

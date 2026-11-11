@@ -123,6 +123,10 @@ def cmd_pcc(a):
             head=a.greedy > 0 or a.verify > 0 or a.spec > 0,
         )
         print(f"loaded in {time.monotonic() - t0:.0f} s", flush=True)
+        overrides = None
+        if a.window:  # both sides: the model and the reference
+            model.cfg.window = a.window
+            overrides = {"sliding_window": a.window}
         if a.spec:
             from . import generate as g
             from .models.qwen35 import Mtp
@@ -149,14 +153,14 @@ def cmd_pcc(a):
                 bad.append("verify")
         elif layers:
             res = pcc.check_layers(
-                model, tokens, a.prefill, layers, log=lambda s: print(s, flush=True)
+                model, tokens, a.prefill, layers, lambda s: print(s, flush=True), overrides
             )
             bad += [k for k, (r, _) in res.items() if r < a.bar]
         if a.greedy:
             got = [model.prefill(tokens[: a.prefill])]
             for k in range(a.greedy - 1):
                 got.append(model.decode(got[-1], a.prefill + k))
-            want = pcc.greedy_reference(ex, tokens[: a.prefill], a.greedy)
+            want = pcc.greedy_reference(ex, tokens[: a.prefill], a.greedy, overrides)
             same = sum(g == w for g, w in zip(got, want))
             print(f"greedy: {same} of {a.greedy} tokens equal\n device {got}\n ref    {want}")
             if got != want:
@@ -219,6 +223,8 @@ def cmd_run(a):
             else g.chat_prompt(ex, [{"role": "user", "content": a.prompt}], thinking=a.think)
         )
         ids = tok.encode(text, add_special_tokens=False).ids
+        if a.raw:  # starts as the template would (BOS for Gemma)
+            ids = g.template_bos(ex, tok) + ids
         out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, Stream(tok, stop))
         print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
     finally:
@@ -339,6 +345,12 @@ def main(argv=None):
         type=int,
         default=0,
         help="a verify of this many teacher-forced rows against decode steps (with --layers: those only)",
+    )
+    p.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="a sliding window for this check, set on both sides (reaches the window's edge in a short prompt)",
     )
     p.add_argument("--bar", type=float, default=0.99, help="the PCC every output must reach")
     p.add_argument("--device-id", type=int, default=0)

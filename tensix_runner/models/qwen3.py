@@ -281,6 +281,23 @@ class Qwen3:
             x = self.layers[i].decode(x, cos, sin, cur, mcs)
         return x
 
+    # pcc's layer access -------------------------------------------------------------------------
+
+    def kv_source(self, i):
+        """The layer whose KV cache layer i attends over (here always i)."""
+        return i
+
+    def check_prefill(self, i, x, tokens):
+        """Layer i's prefill of x [1, 1, T, dim] (the rows of tokens) from position 0."""
+        cos, sin = self.rope.prefill(0, x.shape[-2])
+        return self.layers[i].prefill(x, cos, sin)
+
+    def check_decode(self, i, x, token, p):
+        """Layer i's decode step of x [1, 1, 1, dim] (the row of token) at position p."""
+        cur, idx = self.position(p)
+        cos, sin = self.rope.decode(idx, self.mcs["rope"])
+        return self.layers[i].decode(x, cos, sin, cur, self.mcs)
+
     def _top1(self, x):
         """The argmax ids of x's rows [1, 1, 32, dim] on the device: the final norm, the head and
         argmax there."""

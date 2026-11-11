@@ -32,6 +32,25 @@ def test_chat_prompt(tiny_export):
     assert g.chat_prompt(ex, [{"role": "user", "content": "hi"}]) == "hi!"
 
 
+class Tok:
+    def token_to_id(self, t):
+        return {"<bos>": 2}.get(t)
+
+
+def test_template_bos(tiny_export):
+    cfg = tiny_export / "tokenizer_config.json"
+    cfg.write_text(
+        json.dumps(
+            {"chat_template": "{{ bos_token }}{{ messages[0].content }}", "bos_token": "<bos>"}
+        )
+    )
+    assert g.template_bos(Export(tiny_export), Tok()) == [2]
+    cfg.write_text(json.dumps({"chat_template": TEMPLATE, "bos_token": "<bos>"}))
+    assert g.template_bos(Export(tiny_export), Tok()) == []
+    cfg.write_text(json.dumps({"chat_template": TEMPLATE}))
+    assert g.template_bos(Export(tiny_export), Tok()) == []
+
+
 @pytest.mark.parametrize("ids, want", [([151645, 151643], {151645, 151643}), (2, {2})])
 def test_stop_ids(tiny_export, ids, want):
     (tiny_export / "generation_config.json").write_text(json.dumps({"eos_token_id": ids}))

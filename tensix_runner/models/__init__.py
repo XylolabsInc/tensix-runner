@@ -2,7 +2,13 @@
 # Copyright 2026 Xylolabs
 """The model families, by the checkpoint's model_type."""
 
-FAMILIES = {"qwen3": "qwen3", "qwen3_5_text": "qwen35", "qwen3_5": "qwen35"}
+FAMILIES = {
+    "qwen3": "qwen3",
+    "qwen3_5_text": "qwen35",
+    "qwen3_5": "qwen35",
+    "gemma4_text": "gemma4",
+    "gemma4": "gemma4",
+}
 
 
 def load(export, device, **kw):
@@ -18,4 +24,8 @@ def load(export, device, **kw):
         from .qwen35 import Qwen35
 
         return Qwen35(export, device, **kw)
+    if FAMILIES[mt] == "gemma4":
+        from .gemma4 import Gemma4
+
+        return Gemma4(export, device, **kw)
     raise AssertionError(mt)

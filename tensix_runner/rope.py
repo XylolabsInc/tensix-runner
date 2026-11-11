@@ -16,9 +16,10 @@ def inv_freq(head_dim, theta, rotary_dim=None):
     return 1.0 / (theta ** (torch.arange(0, d, 2, dtype=torch.int64).float() / d))
 
 
-def tables(head_dim, max_seq, theta):
-    """cos and sin [max_seq, head_dim] in HF's layout, float32 (computed as transformers does)."""
-    f = inv_freq(head_dim, theta)
+def tables(head_dim, max_seq, theta, inv=None):
+    """cos and sin [max_seq, head_dim] in HF's layout, float32 (computed as transformers does), from
+    the default inverse frequencies or the head_dim / 2 given in inv."""
+    f = inv_freq(head_dim, theta) if inv is None else inv
     t = torch.arange(max_seq, dtype=torch.int64).float()
     ang = torch.outer(t, f)
     emb = torch.cat([ang, ang], dim=-1)
@@ -26,11 +27,11 @@ def tables(head_dim, max_seq, theta):
 
 
 class HfRope:
-    def __init__(self, device, head_dim, max_seq, theta):
+    def __init__(self, device, head_dim, max_seq, theta, inv=None):
         import ttnn
 
         self.device, self.head_dim, self.max_seq = device, head_dim, max_seq
-        cos, sin = tables(head_dim, max_seq, theta)
+        cos, sin = tables(head_dim, max_seq, theta, inv)
         dram = ttnn.DRAM_MEMORY_CONFIG
 
         def put(t, layout, shape):

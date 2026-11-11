@@ -109,8 +109,7 @@ class Export:
             if layers is None or layer in layers:
                 yield layer, proj, fmt, self.name(layer, proj)
 
-    def get(self, name):
-        """One tensor, as stored."""
+    def _handle(self, name):
         from safetensors import safe_open
 
         shard = self.weight_map.get(name)
@@ -118,7 +117,15 @@ class Export:
             raise KeyError(f"{self.root}: no tensor {name}")
         if shard not in self._handles:
             self._handles[shard] = safe_open(self.root / shard, "pt")
-        return self._handles[shard].get_tensor(name)
+        return self._handles[shard]
+
+    def get(self, name):
+        """One tensor, as stored."""
+        return self._handle(name).get_tensor(name)
+
+    def part(self, name):
+        """A tensor to read in parts: indexing it (part(name)[:, a:b]) reads only those values."""
+        return self._handle(name).get_slice(name)
 
     def close(self):
         self._handles.clear()

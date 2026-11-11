@@ -660,6 +660,9 @@ def _borrow():
         "release_trace",
         "decode_configs",
         "verify",
+        "kv_source",
+        "check_prefill",
+        "check_decode",
     ):
         setattr(Qwen35, name, getattr(Qwen3, name))
 

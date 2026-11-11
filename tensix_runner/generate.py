@@ -51,6 +51,19 @@ def chat_prompt(export, messages, thinking=False):
     )
 
 
+def template_bos(export, tok):
+    """[the BOS token's id] if the chat template starts its text with the BOS token, else []: a
+    prompt given without the template starts the same way."""
+    bos = json.loads((Path(export.root) / "tokenizer_config.json").read_text()).get("bos_token")
+    if not bos or tok.token_to_id(bos) is None:
+        return []
+    try:
+        text = chat_prompt(export, [{"role": "user", "content": "x"}])
+    except ValueError:  # no chat template
+        return []
+    return [tok.token_to_id(bos)] if text.startswith(bos) else []
+
+
 def stop_ids(export):
     """generation_config.json's eos_token_id (one id or a list)."""
     f = Path(export.root) / "generation_config.json"
