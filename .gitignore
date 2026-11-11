@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+# simulator libraries and SFPI unpacked by scripts/install.sh
+ttsim/
+# downloaded exports and weight caches
+exports/
+cache/

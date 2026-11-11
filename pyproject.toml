@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tensix-runner"
+version = "0.1.0"
+description = "Run Xylolabs' BFP4/BFP8 Hugging Face exports on Tenstorrent Tensix devices (Wormhole, Blackhole) through upstream ttnn"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+# ttnn 0.81.1 ships wheels for CPython 3.12 (and 3.10) on Linux x86_64; newer Pythons wait on Tenstorrent's wheels
+requires-python = ">=3.12"
+authors = [{ name = "Xylolabs" }]
+keywords = ["tenstorrent", "tensix", "ttnn", "tt-metal", "llm", "inference", "block floating point"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "torch>=2.6",
+  "safetensors>=0.5",
+  "tokenizers>=0.21",
+  "huggingface_hub>=0.30",
+  "numpy",
+]
+
+[project.optional-dependencies]
+ttnn = ["ttnn==0.81.1; python_version == '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# the references the layer checks compare against (transformers on the same export, on the CPU)
+ref = ["transformers>=5.0"]
+test = ["pytest"]
+
+[project.scripts]
+tensix-runner = "tensix_runner.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tensix_runner"]
+
+[tool.hatch.build.targets.sdist]
+include = ["tensix_runner", "scripts", "tests", "README.md", "LICENSE", "NOTICE", "ORIGINS.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "device: needs ttnn and a Tenstorrent device or ttsim (skipped otherwise)",
+  "export: needs an export directory in TENSIX_RUNNER_EXPORT (skipped otherwise)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["I"]
