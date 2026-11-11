@@ -7,6 +7,8 @@ tensix-runner info [--device-id N]                          what ttnn reports ab
 tensix-runner check EXPORT [--host | --device] [--layers 0,1]
     every projection quant4.json lists packs at its format without moving a value: --host with
     torch alone (no ttnn), by default through ttnn's packer, with --device also through DRAM
+tensix-runner pcc EXPORT [--layers 0,17] [--prefill 32 --decode 2] [--greedy 8]
+    device layers on transformers' inputs, and greedy tokens, against transformers on the CPU
 """
 
 import argparse
@@ -91,6 +93,52 @@ def cmd_check(a):
     return 1 if bad else 0
 
 
+def cmd_pcc(a):
+    import ttnn
+
+    from . import pcc
+    from .device import info, open_device
+    from .export import Export
+    from .models import load
+
+    ex = Export(a.export)
+    layers = sorted(ints(a.layers)) if a.layers else None
+    n = a.prefill + a.decode
+    tokens = pcc.prompt_tokens(ex, n)
+    dev = open_device(a.device_id)
+    bad = []
+    try:
+        print(f"device: {info(dev)}", flush=True)
+        t0 = time.monotonic()
+        # the whole model for greedy tokens, else only the layers compared
+        model = load(
+            ex,
+            dev,
+            max_seq=max(256, -(-n // 32) * 32),
+            layers=None if a.greedy else layers or [],
+            head=a.greedy > 0,
+        )
+        print(f"loaded in {time.monotonic() - t0:.0f} s", flush=True)
+        if layers:
+            res = pcc.check_layers(
+                model, tokens, a.prefill, layers, log=lambda s: print(s, flush=True)
+            )
+            bad += [k for k, (r, _) in res.items() if r < a.bar]
+        if a.greedy:
+            got = [model.prefill(tokens[: a.prefill])]
+            for k in range(a.greedy - 1):
+                got.append(model.decode(got[-1], a.prefill + k))
+            want = pcc.greedy_reference(ex, tokens[: a.prefill], a.greedy)
+            same = sum(g == w for g, w in zip(got, want))
+            print(f"greedy: {same} of {a.greedy} tokens equal\n device {got}\n ref    {want}")
+            if got != want:
+                bad.append("greedy")
+    finally:
+        ttnn.close_device(dev)
+    print(f"{len(bad)} below the bar {a.bar}" + (f": {bad}" if bad else ""))
+    return 1 if bad else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="tensix-runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -110,6 +158,15 @@ def main(argv=None):
     p.add_argument("--device-id", type=int, default=0)
     p.add_argument("--layers", help="comma-separated layer numbers (default: all)")
     p.set_defaults(fn=cmd_check)
+    p = sub.add_parser("pcc", help="layers and greedy tokens against transformers (the ref extra)")
+    p.add_argument("export", help="the export's directory")
+    p.add_argument("--layers", help="comma-separated layers to compare one by one")
+    p.add_argument("--prefill", type=int, default=32, help="prompt rows (a multiple of 32)")
+    p.add_argument("--decode", type=int, default=2, help="decode steps after the prompt")
+    p.add_argument("--greedy", type=int, default=0, help="whole model: this many greedy tokens")
+    p.add_argument("--bar", type=float, default=0.99, help="the PCC every output must reach")
+    p.add_argument("--device-id", type=int, default=0)
+    p.set_defaults(fn=cmd_pcc)
     a = ap.parse_args(argv)
     return a.fn(a)
 

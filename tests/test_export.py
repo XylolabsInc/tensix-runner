@@ -92,3 +92,12 @@ def test_host_check(tiny_export, capsys):
     save_file(tensors, tiny_export / shard)
     assert main(["check", str(tiny_export), "--host"]) == 1
     assert "MOVED layer 1 mlp.down_proj (bfp4)" in capsys.readouterr().out
+
+
+def test_unknown_family(tiny_export):
+    from tensix_runner.models import load
+
+    ex = Export(tiny_export)
+    ex.config["model_type"] = "mamba"
+    with pytest.raises(NotImplementedError, match="mamba"):
+        load(ex, device=None)
