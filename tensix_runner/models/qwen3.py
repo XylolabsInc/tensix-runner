@@ -299,25 +299,44 @@ class Qwen3:
         cos, sin = self.rope.decode(idx, self.mcs["rope"])
         return self.layers[i].decode(x, cos, sin, cur, self.mcs)
 
-    def _top1(self, x):
-        """The argmax ids of x's rows [1, 1, 32, dim] on the device: the final norm, the head and
-        argmax there."""
+    def _head_top1(self, h):
+        """The argmax ids of h's rows (normed) on the device: the head and argmax there."""
         import ttnn
 
-        h = ops.rms_norm(x, self.final_norm, self.cfg.eps)
         logits = ops.linear(h, self.head, ops.fidelity_for(self.export.head_format))
-        ttnn.deallocate(h)
         rm = ttnn.to_layout(logits, ttnn.ROW_MAJOR_LAYOUT)
         ttnn.deallocate(logits)
         top = ttnn.argmax(rm, dim=3)
         ttnn.deallocate(rm)
         return top
 
-    def top1(self, x):
-        """The greedy token of each of x's 32 rows; only the 32 ids are read back."""
+    def _top1(self, x):
+        """The argmax ids of x's rows on the device: the final norm, the head and argmax there."""
         import ttnn
 
-        return ttnn.to_torch(self._top1(x)).reshape(-1).tolist()
+        h = ops.rms_norm(x, self.final_norm, self.cfg.eps)
+        top = self._head_top1(h)
+        ttnn.deallocate(h)
+        return top
+
+    def greedy_normed(self, h, rows):
+        """The greedy ids of h's first rows (normed), read back: the head and argmax on the
+        device. Only the ids come back."""
+        import ttnn
+
+        top = self._head_top1(h)
+        out = ttnn.to_torch(top).reshape(-1)[:rows].tolist()
+        ttnn.deallocate(top)
+        return out
+
+    def greedy(self, x, rows):
+        """The greedy ids of x's first rows: the final norm, then greedy_normed."""
+        import ttnn
+
+        h = ops.rms_norm(x, self.final_norm, self.cfg.eps)
+        out = self.greedy_normed(h, rows)
+        ttnn.deallocate(h)
+        return out
 
     def _decode_step(self, ids, cur, idx):
         """One decode step from device inputs to the argmax ids on the device."""
@@ -330,10 +349,9 @@ class Qwen3:
 
         x = self.prefill_layers(self.embed(self.ids(tokens)))
         last = len(tokens) - 1
-        start = last // TILE * TILE
         # a slice of the whole tensor may be the tensor itself: x is freed only after the head
-        rows = ttnn.slice(x, [0, 0, start, 0], [1, 1, start + TILE, self.cfg.dim])
-        out = self.top1(rows)[last - start]
+        row = ttnn.slice(x, [0, 0, last, 0], [1, 1, last + 1, self.cfg.dim])
+        out = self.greedy(row, 1)[0]
         ttnn.deallocate(x)
         return out
 
@@ -384,10 +402,7 @@ class Qwen3:
             p.reshape(1, T), dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=self.device
         )
         x = self._decode_layers(self.embed(self.ids(tokens), rows=T), cur, idx, T)
-        top = self._top1(x)
-        out = ttnn.to_torch(top).reshape(-1)[:T].tolist()
-        ttnn.deallocate(top)
-        return out, x
+        return self.greedy(x, T), x
 
     def commit(self, a):
         """Keep the first a rows of the last verify: nothing to do here (the KV rows past them

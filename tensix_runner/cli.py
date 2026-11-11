@@ -122,14 +122,22 @@ def cmd_pcc(a):
             layers=None
             if a.greedy or a.drift or ((a.verify or a.spec) and not layers)
             else layers or [],
-            head=a.greedy > 0 or a.verify > 0 or a.spec > 0 or a.drift,
+            head=a.greedy > 0 or a.verify > 0 or a.spec > 0 or a.drift or a.mtp,
         )
         print(f"loaded in {time.monotonic() - t0:.0f} s", flush=True)
         overrides = None
         if a.window:  # both sides: the model and the reference
             model.cfg.window = a.window
             overrides = {"sliding_window": a.window}
-        if a.spec:
+        if a.mtp:
+            from .models.qwen35 import Mtp
+
+            res = pcc.check_mtp(
+                model, Mtp(model), tokens, a.prefill, lambda s: print(s, flush=True)
+            )
+            if res[0] < a.bar or res[4]:
+                bad.append("mtp")
+        elif a.spec:
             from . import generate as g
             from .models.qwen35 import Mtp
 
@@ -351,6 +359,11 @@ def main(argv=None):
         type=int,
         default=0,
         help="whole model: this many greedy steps, each on transformers' tokens",
+    )
+    p.add_argument(
+        "--mtp",
+        action="store_true",
+        help="Qwen3.5's MTP module on transformers' last-layer rows of the prompt (--prefill rows, up to 32)",
     )
     p.add_argument(
         "--drift",

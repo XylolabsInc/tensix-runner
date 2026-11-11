@@ -211,6 +211,88 @@ def check_drift(model, tokens, n, log=print, overrides=None):
     return out
 
 
+def mtp_reference(export, tokens, n):
+    """Qwen3.5's MTP built from transformers' parts, float32 on the CPU (transformers does not run
+    the MTP itself, so this follows vLLM's Qwen3-Next MTP): the model's last-layer rows H for
+    tokens[:n] (before its final norm); fc over [norm_e(embedding of tokens[1 : n + 1]);
+    norm_h(final_norm(H))]; one Qwen3_5DecoderLayer of full attention
+    holding the export's mtp.layers.0 weights, at the positions and with the RoPE the model used;
+    mtp.norm; the model's head. Returns (H [n, dim], the normed MTP rows [n, dim], logits [n, vocab])."""
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5DecoderLayer, Qwen3_5RMSNorm
+
+    m = _hf_model(export)
+    m.eval()
+    inner = m.model
+    lm = inner.language_model if hasattr(inner, "language_model") else inner
+    tc = lm.config
+    full = tc.layer_types.index("full_attention")
+    rec = {}
+
+    def keep_rope(mod, args, kwargs):
+        rec["rope"] = kwargs["position_embeddings"]
+
+    def keep_last(mod, args, kwargs, out):
+        rec["h"] = (out[0] if isinstance(out, tuple) else out).detach().clone()
+
+    hs = [
+        lm.layers[full].register_forward_pre_hook(keep_rope, with_kwargs=True),
+        lm.layers[-1].register_forward_hook(keep_last, with_kwargs=True),
+    ]
+    with torch.no_grad():
+        m(input_ids=torch.tensor([tokens[:n]]))
+    for h in hs:
+        h.remove()
+
+    def get(name):
+        return export.get(name).float()
+
+    layer = Qwen3_5DecoderLayer(tc, full).float().eval()
+    pre = "mtp.layers.0."
+    names = [k for k in export.weight_map if k.startswith(pre)]
+    layer.load_state_dict({k[len(pre) :]: get(k) for k in names}, strict=True)
+    norms = {}
+    for key in ("pre_fc_norm_embedding", "pre_fc_norm_hidden", "norm"):
+        norms[key] = Qwen3_5RMSNorm(tc.hidden_size, eps=tc.rms_norm_eps).float()
+        norms[key].weight.data = get(f"mtp.{key}.weight")
+    with torch.no_grad():
+        hidden = rec["h"]
+        e = lm.embed_tokens(torch.tensor([tokens[1 : n + 1]]))
+        x = torch.cat(
+            [norms["pre_fc_norm_embedding"](e), norms["pre_fc_norm_hidden"](lm.norm(hidden))],
+            dim=-1,
+        )
+        x = x @ get("mtp.fc.weight").T
+        y = layer(x, position_embeddings=rec["rope"], position_ids=torch.arange(n)[None])
+        y = norms["norm"](y)
+        logits = m.lm_head(y)
+    return hidden[0], y[0], logits[0]
+
+
+def check_mtp(model, mtp, tokens, n, log=print):
+    """The device MTP (mtp.rows, a prompt of n rows from position 0) on transformers' last-layer
+    rows against mtp_reference: the normed rows' PCC and every row's draft against the reference's
+    argmax, a difference within one bfloat16 step counting as a tie. Returns (pcc, largest
+    difference, equal rows, ties, other differences)."""
+    import ttnn
+
+    assert 1 < n <= 32 and n + 1 <= len(tokens)
+    h, want_y, logits = mtp_reference(model.export, tokens, n)
+    t0 = time.monotonic()
+    y, _ = mtp.rows(to_device(model.device, h), tokens[1 : n + 1], 0)
+    got_y = ttnn.to_torch(y).float().reshape(-1, h.shape[-1])[:n]
+    got = model.greedy_normed(y, n)
+    ttnn.deallocate(y)
+    want = logits.argmax(-1).tolist()
+    same, ties, wrong = compare_greedy(got, want, [row.double() for row in logits])
+    r = (pcc(got_y, want_y), float((got_y - want_y).abs().max()))
+    log(
+        f"mtp rows 0-{n - 1}: pcc {r[0]:.6f}, max diff {r[1]:.4g}; drafts {same} of {n} equal, "
+        f"{len(ties)} ties {ties}, {len(wrong)} other differences {wrong} "
+        f"({time.monotonic() - t0:.0f} s)"
+    )
+    return (*r, same, ties, wrong)
+
+
 def check_verify(model, tokens, n, T, keep=2, log=print):
     """A verify of T teacher-forced rows against T decode steps, on the same prompt: the greedy
     ids must agree row for row, and after commit(keep) the next decode step must give the

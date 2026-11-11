@@ -550,6 +550,7 @@ class Qwen35:
         self.layers = {i: Qwen35Layer(self, i) for i in ids}
         self._mcs = {}
         self.mcs = Qwen3.decode_configs(self, 1)
+        self.head = None
         if head:
             ex = export
             self.embedding = ttnn.as_tensor(
@@ -571,10 +572,11 @@ class Qwen35:
 
 class Mtp:
     """Qwen3.5's multi-token prediction module, drafting on the device: fc over
-    [pre_fc_norm_embedding(embedding of the next token); pre_fc_norm_hidden(the model's row)], one
-    gated full-attention layer with its own paged KV cache, mtp.norm, then the model's own head and
-    argmax. Its matrices are bf16 in the export (quant4.json does not list them) and are packed at
-    fmt (bf16 by default: exact)."""
+    [pre_fc_norm_embedding(embedding of the next token); pre_fc_norm_hidden(the model's row after
+    its final norm)], one gated full-attention layer with its own paged KV cache, mtp.norm, then
+    the model's head (not its final norm) and argmax, as vLLM's Qwen3-Next MTP. Its matrices are
+    bf16 in the export (quant4.json does not list them) and are packed at fmt (bf16 by default:
+    exact)."""
 
     def __init__(self, model, fmt="bf16"):
         ex, dev = model.export, model.device
@@ -585,9 +587,10 @@ class Mtp:
         self.norm = ops.norm_weight(dev, ex.get("mtp.norm.weight"), 1.0)
         self.layer = Qwen35Layer(model, -1, prefix="mtp.layers.0.", fmt=fmt)
 
-    def rows(self, hidden, tokens, pos):
-        """hidden [1, 1, n, dim]: the model's last-layer rows (before its final norm) at positions
-        pos .. pos + n - 1; tokens: the token after each. The rows go through fc, the MTP layer
+    def rows(self, hidden, tokens, pos, chained=False):
+        """hidden [1, 1, n, dim]: the model's last-layer rows (before its final norm, which is
+        applied here) at positions pos .. pos + n - 1, or with chained the MTP's own normed rows of
+        the step before; tokens: the token after each. The rows go through fc, the MTP layer
         (writing its KV at those positions: a prompt from position 0 as a prefill, at most 8 rows
         later as a decode of n users) and mtp.norm. Returns (the normed rows, the draft id after
         the last row)."""
@@ -597,10 +600,16 @@ class Mtp:
         n = len(tokens)
         prompt = pos == 0 and n > 1
         e = m.embed(m.ids(tokens), rows=None if prompt else n)
+        # the hidden rows after the model's final norm, as vLLM and q8 feed the MTP (KL against
+        # the model's next row 0.65 with it, 0.82 without, in transformers on a 69-token text); a
+        # chained step's rows are the MTP's own, already normed
+        hn = hidden if chained else ops.rms_norm(hidden, m.final_norm, c.eps)
         cat = ttnn.concat(
-            [ops.rms_norm(e, self.norm_e, c.eps), ops.rms_norm(hidden, self.norm_h, c.eps)], dim=-1
+            [ops.rms_norm(e, self.norm_e, c.eps), ops.rms_norm(hn, self.norm_h, c.eps)], dim=-1
         )
         ttnn.deallocate(e)
+        if not chained:
+            ttnn.deallocate(hn)
         x = ops.linear(cat, self.fc)
         ttnn.deallocate(cat)
         if prompt:
@@ -616,11 +625,8 @@ class Mtp:
             cos, sin = m.rope.decode(idx, mcs["rope"])
             y = self.layer.decode(x, cos, sin, cur, mcs)
         y = ops.rms_norm(y, self.norm, c.eps)
-        last = n - 1
-        start = last // TILE * TILE
-        top = m._top1(ttnn.slice(y, [0, 0, start, 0], [1, 1, start + TILE, c.dim]))
-        draft = int(ttnn.to_torch(top).reshape(-1)[last - start])
-        ttnn.deallocate(top)
+        # the MTP's own norm, then the shared head (not the model's final norm)
+        draft = m.greedy_normed(ttnn.slice(y, [0, 0, n - 1, 0], [1, 1, n, c.dim]), 1)[0]
         return y, draft
 
     def draft(self, hidden, tokens, pos, k):
@@ -633,7 +639,7 @@ class Mtp:
         for _ in range(k - 1):
             # a slice of the whole tensor may be the tensor itself: y is freed after its use
             last = ttnn.slice(y, [0, 0, n - 1, 0], [1, 1, n, y.shape[-1]])
-            y_next, d = self.rows(last, [d], p)
+            y_next, d = self.rows(last, [d], p, chained=True)
             ttnn.deallocate(y)
             y = y_next
             out.append(d)
@@ -654,7 +660,9 @@ def _borrow():
         "decode_layers",
         "_decode_layers",
         "_top1",
-        "top1",
+        "_head_top1",
+        "greedy",
+        "greedy_normed",
         "_decode_step",
         "decode",
         "decode_traced",
@@ -674,9 +682,8 @@ def _borrow():
 
         x = self.prefill_layers(self.embed(self.ids(tokens)), len(tokens))
         last = len(tokens) - 1
-        start = last // TILE * TILE
-        rows = ttnn.slice(x, [0, 0, start, 0], [1, 1, start + TILE, self.cfg.dim])
-        return self.top1(rows)[last - start], x
+        row = ttnn.slice(x, [0, 0, last, 0], [1, 1, last + 1, self.cfg.dim])
+        return self.greedy(row, 1)[0], x
 
     def prefill(self, tokens):
         import ttnn
