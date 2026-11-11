@@ -119,8 +119,10 @@ def cmd_pcc(a):
             ex,
             dev,
             max_seq=max(256, -(-(n + a.verify + a.spec + a.k + 1) // 32) * 32),
-            layers=None if a.greedy or ((a.verify or a.spec) and not layers) else layers or [],
-            head=a.greedy > 0 or a.verify > 0 or a.spec > 0,
+            layers=None
+            if a.greedy or a.drift or ((a.verify or a.spec) and not layers)
+            else layers or [],
+            head=a.greedy > 0 or a.verify > 0 or a.spec > 0 or a.drift,
         )
         print(f"loaded in {time.monotonic() - t0:.0f} s", flush=True)
         overrides = None
@@ -151,19 +153,31 @@ def cmd_pcc(a):
             )
             if ver != seq or after != seq[keep]:
                 bad.append("verify")
+        elif a.drift:
+            res = pcc.check_drift(
+                model, tokens, a.prefill, lambda s: print(s, flush=True), overrides
+            )
+            bad += [k for k, (r, _) in res.items() if r < a.bar]
         elif layers:
             res = pcc.check_layers(
                 model, tokens, a.prefill, layers, lambda s: print(s, flush=True), overrides
             )
             bad += [k for k, (r, _) in res.items() if r < a.bar]
         if a.greedy:
-            got = [model.prefill(tokens[: a.prefill])]
+            # transformers first: the device decodes its tokens (teacher forcing), so a tie
+            # within bf16 rounding at one step leaves the later steps comparable
+            prompt = tokens[: a.prefill]
+            want, logits = pcc.greedy_reference(ex, prompt, a.greedy, overrides)
+            got = [model.prefill(prompt)]
             for k in range(a.greedy - 1):
-                got.append(model.decode(got[-1], a.prefill + k))
-            want = pcc.greedy_reference(ex, tokens[: a.prefill], a.greedy, overrides)
-            same = sum(g == w for g, w in zip(got, want))
-            print(f"greedy: {same} of {a.greedy} tokens equal\n device {got}\n ref    {want}")
-            if got != want:
+                got.append(model.decode(want[k], a.prefill + k))
+            same, ties, wrong = pcc.compare_greedy(got, want, logits)
+            print(
+                f"greedy: {same} of {a.greedy} steps equal, {len(ties)} ties within bf16 "
+                f"{ties}, {len(wrong)} other differences {wrong}\n device {got}\n ref    {want}",
+                flush=True,
+            )
+            if wrong:
                 bad.append("greedy")
     finally:
         ttnn.close_device(dev)
@@ -332,7 +346,17 @@ def main(argv=None):
     p.add_argument("--layers", help="comma-separated layers to compare one by one")
     p.add_argument("--prefill", type=int, default=32, help="prompt rows (a multiple of 32)")
     p.add_argument("--decode", type=int, default=2, help="decode steps after the prompt")
-    p.add_argument("--greedy", type=int, default=0, help="whole model: this many greedy tokens")
+    p.add_argument(
+        "--greedy",
+        type=int,
+        default=0,
+        help="whole model: this many greedy steps, each on transformers' tokens",
+    )
+    p.add_argument(
+        "--drift",
+        action="store_true",
+        help="whole model: each layer's output in one prefill against transformers' (errors add up)",
+    )
     p.add_argument(
         "--spec",
         type=int,

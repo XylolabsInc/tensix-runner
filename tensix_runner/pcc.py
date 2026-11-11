@@ -6,7 +6,8 @@ The reference runs the export in float32 on the CPU and records every decoder la
 output at every position. For each checked layer, the device layer gets the reference's input rows:
 a prefill over the first T positions, then one decode step per later position on the KV rows the
 prefill wrote. Each output is compared with the reference's by the Pearson correlation (PCC) and
-the largest absolute difference. The whole-model check compares greedy tokens."""
+the largest absolute difference. The whole-model check compares greedy tokens step by step, the
+device decoding transformers' tokens."""
 
 import time
 
@@ -84,11 +85,44 @@ def reference(export, tokens, layers, overrides=None):
 
 
 def greedy_reference(export, tokens, n, overrides=None):
-    """transformers' greedy continuation (n tokens) in float32 on the CPU."""
+    """transformers' greedy continuation (n tokens) in float32 on the CPU, and each step's logits
+    [vocab] before any final softcap (Gemma's tanh(x / cap) * cap is undone)."""
     m = _hf_model(export, overrides)
     with torch.no_grad():
-        out = m.generate(torch.tensor([tokens]), max_new_tokens=n, do_sample=False)
-    return out[0, len(tokens) :].tolist()
+        out = m.generate(
+            torch.tensor([tokens]),
+            max_new_tokens=n,
+            do_sample=False,
+            output_logits=True,
+            return_dict_in_generate=True,
+        )
+    cap = export.text_config.get("final_logit_softcapping")
+    logits = []
+    for row in out.logits:
+        x = row[0].double()
+        logits.append(cap * torch.atanh(x / cap) if cap else x)
+    return out.sequences[0, len(tokens) :].tolist(), logits
+
+
+def bf16_ulp(x):
+    """The spacing of bfloat16 values at x (8 significant bits)."""
+    e = torch.floor(torch.log2(torch.tensor(abs(float(x)) or 1e-30, dtype=torch.float64)))
+    return float(2.0 ** (e - 7))
+
+
+def compare_greedy(got, want, logits):
+    """Step by step, the device's token against transformers' (the device decoding transformers'
+    tokens, so one difference does not shift the rest). A difference counts as a tie when the two
+    tokens' logits in transformers lie within one bfloat16 step of each other. Returns
+    (equal steps, ties [(step, device, transformers, gap)], other differences [same])."""
+    same, ties, wrong = 0, [], []
+    for k, (g, w) in enumerate(zip(got, want)):
+        if g == w:
+            same += 1
+            continue
+        gap = float(logits[k][w] - logits[k][g])
+        (ties if gap <= bf16_ulp(logits[k][w]) else wrong).append((k, g, w, round(gap, 4)))
+    return same, ties, wrong
 
 
 def to_device(device, rows, logical=None):
@@ -142,6 +176,38 @@ def check_layers(model, tokens, prefill_n, layers, log=print, overrides=None):
             got = ttnn.to_torch(model.check_decode(i, xd, tokens[p], p))
             got = got.reshape(-1, got.shape[-1])[:1].float()
             record((i, p), got, y[p : p + 1], t0, f"decode at {p}")
+    return out
+
+
+def check_drift(model, tokens, n, log=print, overrides=None):
+    """The whole model's prefill of the first n tokens (a multiple of 32), each layer on the
+    previous device layer's output: every layer's output against transformers' at the same layer,
+    so that the drift through the depth shows. Returns {layer: (pcc, largest difference)}."""
+    import ttnn
+
+    ref = reference(model.export, tokens[:n], sorted(model.layers), overrides)
+    got = {}
+    for i, layer in model.layers.items():
+
+        def wrap(*args, _i=i, _f=layer.prefill, **kw):
+            y = _f(*args, **kw)
+            t = ttnn.to_torch(y).float()
+            got[_i] = t.reshape(-1, t.shape[-1])[:n]
+            return y
+
+        layer.prefill = wrap
+    t0 = time.monotonic()
+    try:
+        model.prefill(tokens[:n])
+    finally:
+        for layer in model.layers.values():
+            del layer.prefill  # back to the class's method
+    out = {}
+    for i in sorted(got):
+        y = ref[i][1][:n]
+        out[i] = (pcc(got[i], y), float((got[i] - y).abs().max()))
+        log(f"layer {i} in the whole prefill: pcc {out[i][0]:.6f}, max diff {out[i][1]:.4g}")
+    log(f"({time.monotonic() - t0:.0f} s)")
     return out
 
 
