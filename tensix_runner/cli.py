@@ -11,6 +11,7 @@ tensix-runner pcc EXPORT [--layers 0,17] [--prefill 32 --decode 2] [--greedy 8]
     device layers on transformers' inputs, and greedy tokens, against transformers on the CPU
 tensix-runner run EXPORT PROMPT [--max-new 256] [--raw] [--think]   one prompt, greedy
 tensix-runner chat EXPORT [--system TEXT]                           a conversation on the terminal
+tensix-runner bench EXPORT [--pp 512] [--tg 128] [--depth 0]        llama-bench's pp and tg, timed here
 """
 
 import argparse
@@ -227,6 +228,44 @@ def cmd_chat(a):
     return 0
 
 
+def cmd_bench(a):
+    """pp and tg in llama-bench's form, one user, timed on this device (each pp from position 0;
+    tg as tg_n decode steps after a pp of the depth)."""
+    import statistics
+
+    import ttnn
+
+    from . import generate as g
+
+    ex, dev, model = _open_model(a)
+    try:
+        tok = g.tokenizer(ex)
+        text = " ".join(["The quick brown fox jumps over the lazy dog."] * 400)
+        ids = tok.encode(text, add_special_tokens=False).ids
+        model.prefill(ids[:32])  # compile the programs once, untimed
+        print("| test | depth | tok/s | runs |\n|---|---:|---:|---:|")
+        for n in ints(a.pp):
+            rates = []
+            for _ in range(a.repeat):
+                t0 = time.perf_counter()
+                model.prefill(ids[:n])
+                rates.append(n / (time.perf_counter() - t0))
+            print(f"| pp{n} | 0 | {statistics.mean(rates):.2f} | {a.repeat} |", flush=True)
+        for d in ints(a.depth):
+            rates = []
+            for _ in range(a.repeat):
+                t = model.prefill(ids[: max(d, 1)])
+                t0 = time.perf_counter()
+                for k in range(a.tg):
+                    t = model.decode(t, max(d, 1) + k)
+                rates.append(a.tg / (time.perf_counter() - t0))
+            print(f"| tg{a.tg} | {d} | {statistics.mean(rates):.2f} | {a.repeat} |", flush=True)
+        print("eager (no trace); one user")
+    finally:
+        ttnn.close_device(dev)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="tensix-runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -273,6 +312,15 @@ def main(argv=None):
         p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length")
         p.add_argument("--device-id", type=int, default=0)
         p.set_defaults(fn=fn)
+    p = sub.add_parser("bench", help="pp and tg in llama-bench's form, timed on this device")
+    p.add_argument("export", help="the export's directory")
+    p.add_argument("--pp", default="512", help="prompt lengths, comma-separated")
+    p.add_argument("--tg", type=int, default=128, help="decode steps per tg run")
+    p.add_argument("--depth", default="0", help="tg depths, comma-separated")
+    p.add_argument("--repeat", type=int, default=3)
+    p.add_argument("--max-seq", type=int, default=4096, help="the KV cache's length")
+    p.add_argument("--device-id", type=int, default=0)
+    p.set_defaults(fn=cmd_bench)
     a = ap.parse_args(argv)
     return a.fn(a)
 
