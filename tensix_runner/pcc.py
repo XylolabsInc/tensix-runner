@@ -42,7 +42,9 @@ def reference(export, tokens, layers):
     m = AutoModelForCausalLM.from_pretrained(str(export.root), dtype=torch.float32)
     m.eval()
     rec = {}
-    blocks = m.model.layers
+    # the decoder layers: model.layers (text models) or model.language_model.layers (multimodal)
+    inner = m.model
+    blocks = inner.layers if hasattr(inner, "layers") else inner.language_model.layers
 
     def hook(i):
         def f(mod, args, kwargs, out):

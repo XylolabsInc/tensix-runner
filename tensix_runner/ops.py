@@ -44,14 +44,15 @@ def matrix(device, w, fmt):
     return ttnn.to_device(weights.pack(w, fmt), device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
 
 
-def norm_weight(device, w):
-    """An RMSNorm weight [dim] in the form ttnn.rms_norm reads: bf16 rows of 32, row major."""
+def norm_weight(device, w, offset=0.0):
+    """An RMSNorm weight [dim] in the form ttnn.rms_norm reads: bf16 rows of 32, row major. offset
+    1.0 for checkpoints that store the weight zero-centered (Qwen3.5's RMSNorm scales by 1 + w)."""
     import ttnn
 
     dim = w.shape[-1]
     assert dim % TILE == 0, f"norm width {dim} is not a multiple of {TILE}"
     return ttnn.as_tensor(
-        w.to(torch.bfloat16).reshape(1, 1, dim // TILE, TILE),
+        (w.float() + offset).to(torch.bfloat16).reshape(1, 1, dim // TILE, TILE),
         dtype=ttnn.bfloat16,
         layout=ttnn.ROW_MAJOR_LAYOUT,
         device=device,
