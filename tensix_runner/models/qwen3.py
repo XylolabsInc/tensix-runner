@@ -105,10 +105,11 @@ class Qwen3Layer:
         import ttnn
 
         c = self.model.cfg
-        h = ops.rms_norm(x, self.attn_norm, c.eps)
+        h = ops.rows(ops.rms_norm(x, self.attn_norm, c.eps), mcs["users"])
         qkv = ops.linear(h, self.wqkv, ops.fidelity_for(self.qkv_fmt), ttnn.L1_MEMORY_CONFIG)
         ttnn.deallocate(h)
-        qkv = ttnn.reshape(qkv, (1, 1, 1, qkv.shape[-1]), (1, 1, TILE, qkv.shape[-1]))
+        users = mcs["users"]  # one decode row, or a verify's T rows as T users
+        qkv = ttnn.reshape(qkv, (1, 1, users, qkv.shape[-1]), (1, 1, TILE, qkv.shape[-1]))
         q, k, v = ttnn.experimental.nlp_create_qkv_heads_decode(
             qkv, num_heads=c.heads, num_kv_heads=c.kv_heads, memory_config=mcs["heads"]
         )
@@ -117,15 +118,15 @@ class Qwen3Layer:
         k = self._head_norm(k, self.k_norm, True)
         q = ttnn.experimental.rotary_embedding_hf(q, cos, sin, is_decode_mode=True)
         k = ttnn.experimental.rotary_embedding_hf(k, cos, sin, is_decode_mode=True)
-        self.kv.update(k, v, pos)
+        self.kv.update(k, v, pos, users)
         ttnn.deallocate(k)
         ttnn.deallocate(v)
-        a = self.kv.attend(q, pos, 1.0 / math.sqrt(c.head_dim), ops.compute_config("hifi4"))
+        a = self.kv.attend(q, pos, 1.0 / math.sqrt(c.head_dim), ops.compute_config("hifi4"), users)
         ttnn.deallocate(q)
         a = ttnn.to_memory_config(a, mcs["sdpa_out"])
         o = ttnn.experimental.nlp_concat_heads_decode(a, num_heads=c.heads)
         ttnn.deallocate(a)
-        o = ttnn.to_memory_config(o, ttnn.DRAM_MEMORY_CONFIG)
+        o = ops.rows(ttnn.to_memory_config(o, ttnn.DRAM_MEMORY_CONFIG), users)
         return self._rest(x, o)
 
     def _rest(self, x, o):
@@ -133,16 +134,18 @@ class Qwen3Layer:
         import ttnn
 
         c = self.model.cfg
-        y = ops.linear(o, self.wo, ops.fidelity_for(self.o_fmt))
+        n = x.shape[-2]  # both sides of each add at x's rows
+        y = ops.rows(ops.linear(o, self.wo, ops.fidelity_for(self.o_fmt)), n)
         ttnn.deallocate(o)
-        x = ttnn.add(x, y)
+        s = ttnn.add(x, y)
         ttnn.deallocate(y)
-        h = ops.rms_norm(x, self.mlp_norm, c.eps)
-        m = self.mlp(h)
+        ttnn.deallocate(x)  # the layer's input, made by the step before it
+        h = ops.rms_norm(s, self.mlp_norm, c.eps)
+        m = ops.rows(self.mlp(h), n)
         ttnn.deallocate(h)
-        out = ttnn.add(x, m)
+        out = ttnn.add(s, m)
         ttnn.deallocate(m)
-        ttnn.deallocate(x)
+        ttnn.deallocate(s)
         return out
 
 
@@ -173,7 +176,8 @@ class Qwen3:
         self.rope = HfRope(device, c.head_dim, max_seq, c.theta)
         ids = range(c.layers) if layers is None else layers
         self.layers = {i: Qwen3Layer(self, i) for i in ids}
-        self.mcs = self._decode_configs()
+        self._mcs = {}
+        self.mcs = self.decode_configs(1)
         self.head = None
         if head:
             ex = export
@@ -187,30 +191,36 @@ class Qwen3:
             self.final_norm = ops.norm_weight(device, ex.get(f"{ex.prefix}norm.weight"))
             self.head = ops.matrix(device, ex.get(ex.head_name), ex.head_format)
 
-    def _decode_configs(self):
-        """The decode heads' height-sharded layouts for one user (as tt-transformers sets them)."""
+    def decode_configs(self, users=1):
+        """The decode heads' height-sharded layouts for `users` rows (one decode row, or a
+        verify's T rows as T users): one core each, as tt-transformers sets them. Made once per
+        user count."""
         import ttnn
 
+        if users in self._mcs:
+            return self._mcs[users]
         c = self.cfg
-        heads = ttnn.create_sharded_memory_config(
-            shape=(TILE, c.head_dim),
-            core_grid=ttnn.CoreRangeSet(
-                {ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(0, 0))}
-            ),
-            strategy=ttnn.ShardStrategy.HEIGHT,
-            orientation=ttnn.ShardOrientation.ROW_MAJOR,
-            use_height_and_width_as_shard_shape=True,
+        grid = ttnn.CoreRangeSet(
+            {ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(users - 1, 0))}
         )
-        sdpa_out = ttnn.create_sharded_memory_config(
-            shape=(math.ceil(c.heads / TILE) * TILE, c.head_dim),
-            core_grid=ttnn.CoreRangeSet(
-                {ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(0, 0))}
-            ),
-            strategy=ttnn.ShardStrategy.HEIGHT,
-            orientation=ttnn.ShardOrientation.ROW_MAJOR,
-            use_height_and_width_as_shard_shape=True,
-        )
-        return {"heads": heads, "sdpa_out": sdpa_out, "rope": heads}
+
+        def shard(rows):
+            return ttnn.create_sharded_memory_config(
+                shape=(rows, c.head_dim),
+                core_grid=grid,
+                strategy=ttnn.ShardStrategy.HEIGHT,
+                orientation=ttnn.ShardOrientation.ROW_MAJOR,
+                use_height_and_width_as_shard_shape=True,
+            )
+
+        heads = shard(TILE)
+        self._mcs[users] = {
+            "heads": heads,
+            "sdpa_out": shard(math.ceil(c.heads / TILE) * TILE),
+            "rope": heads,
+            "users": users,
+        }
+        return self._mcs[users]
 
     # the device side of one token or one prompt -------------------------------------------------
 
@@ -264,10 +274,11 @@ class Qwen3:
         cur, idx = self.position(pos)
         return self._decode_layers(x, cur, idx)
 
-    def _decode_layers(self, x, cur, idx):
-        cos, sin = self.rope.decode(idx, self.mcs["rope"])
+    def _decode_layers(self, x, cur, idx, users=1):
+        mcs = self.decode_configs(users)
+        cos, sin = self.rope.decode(idx, mcs["rope"])
         for i in sorted(self.layers):
-            x = self.layers[i].decode(x, cos, sin, cur, self.mcs)
+            x = self.layers[i].decode(x, cos, sin, cur, mcs)
         return x
 
     def _top1(self, x):
@@ -341,6 +352,28 @@ class Qwen3:
             ttnn.copy_host_to_device_tensor(h, d)
         ttnn.execute_trace(self.device, self._trace, cq_id=0, blocking=False)
         return int(ttnn.to_torch(self._trace_out).reshape(-1)[0])
+
+    def verify(self, tokens, pos):
+        """The greedy token after each of tokens (T of them, at positions pos .. pos + T - 1) as
+        one decode step of T rows; the DeltaNet layers keep every row's state until commit().
+        Returns (the T ids, the last layer's rows [1, 1, T, dim] on the device)."""
+        import ttnn
+
+        T = len(tokens)
+        p = torch.arange(pos, pos + T, dtype=torch.int32)
+        cur = ttnn.from_torch(p, dtype=ttnn.int32, device=self.device)
+        idx = ttnn.from_torch(
+            p.reshape(1, T), dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=self.device
+        )
+        x = self._decode_layers(self.embed(self.ids(tokens), rows=T), cur, idx, T)
+        top = self._top1(x)
+        out = ttnn.to_torch(top).reshape(-1)[:T].tolist()
+        ttnn.deallocate(top)
+        return out, x
+
+    def commit(self, a):
+        """Keep the first a rows of the last verify: nothing to do here (the KV rows past them
+        are written over later)."""
 
     def release_trace(self):
         import ttnn

@@ -109,3 +109,12 @@ class SwiGLU:
         y = linear(a, self.down, fidelity_for(self.fmts[2]))
         ttnn.deallocate(a)
         return y
+
+
+def rows(t, n):
+    """t [1, 1, *, C] viewed with n logical rows in its tiles (some ops return a partial tile's
+    padding rows as logical ones; a residual add then needs both sides at n rows)."""
+    import ttnn
+
+    c = t.shape[-1]
+    return ttnn.reshape(t, (1, 1, n, c), (1, 1, -(-n // TILE) * TILE, c))

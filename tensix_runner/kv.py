@@ -19,6 +19,7 @@ class PagedKV:
 
         assert max_seq % BLOCK == 0, f"max_seq {max_seq} is not a multiple of {BLOCK}"
         self.device, self.blocks = device, max_seq // BLOCK
+        self.head_dim, self._one = head_dim, None
         shape = [self.blocks, kv_heads, BLOCK, head_dim]
         kw = {"dtype": ttnn.bfloat16, "layout": ttnn.TILE_LAYOUT, "device": device}
         self.k = ttnn.zeros(shape, memory_config=ttnn.DRAM_MEMORY_CONFIG, **kw)
@@ -45,12 +46,44 @@ class PagedKV:
         ttnn.experimental.paged_fill_cache(self.v, v, self.table(), batch_idx=0)
 
     def update(self, k, v, pos, users=1):
-        """Decode rows [1, users, kv_heads (32), head_dim] written at the positions in pos."""
+        """Decode rows [1, users, kv_heads (32), head_dim], height sharded one user a core, written
+        at the positions in pos (int32 [users]).
+
+        paged_update_cache rewrites, for each user and on that user's core, the whole tile of the
+        block its row falls in, all users at once: users whose rows share a block keep only one of
+        their rows (on ttsim, the last user's). A verify's rows are one sequence's consecutive
+        positions, so they are written one user at a time."""
         import ttnn
 
-        t = self.table(users)
-        ttnn.experimental.paged_update_cache(self.k, k, update_idxs_tensor=pos, page_table=t)
-        ttnn.experimental.paged_update_cache(self.v, v, update_idxs_tensor=pos, page_table=t)
+        t = self.table(1)
+        if users == 1:
+            ttnn.experimental.paged_update_cache(self.k, k, update_idxs_tensor=pos, page_table=t)
+            ttnn.experimental.paged_update_cache(self.v, v, update_idxs_tensor=pos, page_table=t)
+            return
+        if self._one is None:  # one user's row on one core
+            core = ttnn.CoreRangeSet({ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(0, 0))})
+            self._one = ttnn.create_sharded_memory_config(
+                shape=(32, self.head_dim),
+                core_grid=core,
+                strategy=ttnn.ShardStrategy.HEIGHT,
+                orientation=ttnn.ShardOrientation.ROW_MAJOR,
+                use_height_and_width_as_shard_shape=True,
+            )
+        idx = [ttnn.slice(pos, [u], [u + 1]) for u in range(users)]
+        for rows, cache in ((k, self.k), (v, self.v)):
+            flat = ttnn.sharded_to_interleaved(rows, ttnn.L1_MEMORY_CONFIG)
+            h, d = flat.shape[2], flat.shape[3]
+            for u in range(users):
+                one = ttnn.interleaved_to_sharded(
+                    ttnn.slice(flat, [0, u, 0, 0], [1, u + 1, h, d]), self._one
+                )
+                ttnn.experimental.paged_update_cache(
+                    cache, one, update_idxs_tensor=idx[u], page_table=t
+                )
+                ttnn.deallocate(one)
+            ttnn.deallocate(flat)
+        for i in idx:
+            ttnn.deallocate(i)
 
     def attend(self, q, pos, scale, ckc, users=1):
         """Decode attention of q [1, users, heads (32), head_dim] over each user's positions up to

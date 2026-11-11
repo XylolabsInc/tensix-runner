@@ -79,3 +79,45 @@ def generate(model, tokens, max_new, stop=(), on_token=None):
         if on_token:
             on_token(out[-1])
     return out, t1 - t0, time.perf_counter() - t1
+
+
+def speculate(model, mtp, tokens, max_new, k=2, stop=(), on_token=None):
+    """Greedy tokens with k drafts a round from the model's MTP module (mtp.draft), each round
+    verified as one decode step of k + 1 rows (model.verify) and the kept rows committed: the
+    output equals generate()'s up to ties within bf16 rounding. Returns (tokens, prefill seconds,
+    decode seconds, the number of draft rows each round kept)."""
+    import ttnn
+
+    if len(tokens) + max_new + k > model.max_seq:
+        raise ValueError(
+            f"{len(tokens)} prompt + {max_new} new tokens exceed max_seq {model.max_seq}"
+        )
+    t0 = time.perf_counter()
+    first, x = model.prefill_hidden(tokens)
+    drafts = mtp.draft(x, list(tokens[1:]) + [first], 0, k)
+    ttnn.deallocate(x)
+    t1 = time.perf_counter()
+    out, kept, p = [first], [], len(tokens)
+    if on_token:
+        on_token(first)
+    while len(out) < max_new and out[-1] not in stop:
+        ver, xv = model.verify([out[-1], *drafts], p)
+        m = 0
+        while m < k and drafts[m] == ver[m]:
+            m += 1
+        model.commit(m + 1)
+        new = ver[: m + 1]
+        kept.append(m)
+        for t in new:
+            if len(out) < max_new and out[-1] not in stop:
+                out.append(t)
+                if on_token:
+                    on_token(t)
+        if len(out) >= max_new or out[-1] in stop:  # no drafts needed after the last round
+            ttnn.deallocate(xv)
+            break
+        rows = ttnn.slice(xv, [0, 0, 0, 0], [1, 1, m + 1, xv.shape[-1]])
+        drafts = mtp.draft(rows, new, p, k)
+        ttnn.deallocate(xv)
+        p += m + 1
+    return out, t1 - t0, time.perf_counter() - t1, kept

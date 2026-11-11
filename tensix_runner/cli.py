@@ -113,16 +113,41 @@ def cmd_pcc(a):
     try:
         print(f"device: {info(dev)}", flush=True)
         t0 = time.monotonic()
-        # the whole model for greedy tokens, else only the layers compared
+        # the whole model for greedy tokens, else only the layers compared (a verify check takes
+        # --layers as the model's layers, with the head)
         model = load(
             ex,
             dev,
-            max_seq=max(256, -(-n // 32) * 32),
-            layers=None if a.greedy else layers or [],
-            head=a.greedy > 0,
+            max_seq=max(256, -(-(n + a.verify + a.spec + a.k + 1) // 32) * 32),
+            layers=None if a.greedy or ((a.verify or a.spec) and not layers) else layers or [],
+            head=a.greedy > 0 or a.verify > 0 or a.spec > 0,
         )
         print(f"loaded in {time.monotonic() - t0:.0f} s", flush=True)
-        if layers:
+        if a.spec:
+            from . import generate as g
+            from .models.qwen35 import Mtp
+
+            mtp = Mtp(model)
+            prompt = tokens[: a.prefill]
+            plain, _, t_plain = g.generate(model, prompt, a.spec)
+            spec, _, t_spec, kept = g.speculate(model, mtp, prompt, a.spec, a.k)
+            same = sum(x == y for x, y in zip(plain, spec))
+            print(
+                f"spec k={a.k}: {same} of {a.spec} tokens equal to plain; kept a round {kept}"
+                f"\n plain {plain}\n spec  {spec}\n (plain {t_plain:.0f} s, spec {t_spec:.0f} s)",
+                flush=True,
+            )
+            if plain != spec:
+                bad.append("spec")
+        elif a.verify:
+            more = pcc.prompt_tokens(ex, a.prefill + a.verify + 1)
+            keep = max(1, a.verify - 1)
+            ver, seq, after = pcc.check_verify(
+                model, more, a.prefill, a.verify, keep, log=lambda s: print(s, flush=True)
+            )
+            if ver != seq or after != seq[keep]:
+                bad.append("verify")
+        elif layers:
             res = pcc.check_layers(
                 model, tokens, a.prefill, layers, log=lambda s: print(s, flush=True)
             )
@@ -302,6 +327,19 @@ def main(argv=None):
     p.add_argument("--prefill", type=int, default=32, help="prompt rows (a multiple of 32)")
     p.add_argument("--decode", type=int, default=2, help="decode steps after the prompt")
     p.add_argument("--greedy", type=int, default=0, help="whole model: this many greedy tokens")
+    p.add_argument(
+        "--spec",
+        type=int,
+        default=0,
+        help="MTP drafting: this many tokens drafted and verified against plain greedy (with --layers: those only)",
+    )
+    p.add_argument("--k", type=int, default=2, help="--spec: drafts a round")
+    p.add_argument(
+        "--verify",
+        type=int,
+        default=0,
+        help="a verify of this many teacher-forced rows against decode steps (with --layers: those only)",
+    )
     p.add_argument("--bar", type=float, default=0.99, help="the PCC every output must reach")
     p.add_argument("--device-id", type=int, default=0)
     p.set_defaults(fn=cmd_pcc)

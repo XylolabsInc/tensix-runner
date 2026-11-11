@@ -112,13 +112,18 @@ class Qwen35Rope(HfRope):
 
 
 class GatedAttention:
-    def __init__(self, model, i):
+    def __init__(self, model, i, prefix=None, fmt=None):
+        """Layer i's attention, or with prefix (e.g. "mtp.layers.0.") another one whose matrices
+        quant4.json does not list, packed at fmt."""
         ex, dev, c = model.export, model.device, model.cfg
         self.model = model
-        p = f"{ex.prefix}layers.{i}.self_attn."
-        fmts = {ex.formats[(i, f"self_attn.{n}_proj")] for n in "qkv"}
-        assert len(fmts) == 1, f"layer {i}: q, k and v in different formats {fmts}"
-        self.qkv_fmt, self.o_fmt = fmts.pop(), ex.formats[(i, "self_attn.o_proj")]
+        p = (prefix or f"{ex.prefix}layers.{i}.") + "self_attn."
+        if fmt is None:
+            fmts = {ex.formats[(i, f"self_attn.{n}_proj")] for n in "qkv"}
+            assert len(fmts) == 1, f"layer {i}: q, k and v in different formats {fmts}"
+            self.qkv_fmt, self.o_fmt = fmts.pop(), ex.formats[(i, "self_attn.o_proj")]
+        else:
+            self.qkv_fmt = self.o_fmt = fmt
         d, perm = c.head_dim, model.perm
         qg = ex.get(p + "q_proj.weight").reshape(c.heads, 2, d, -1)
         q = permute_heads(qg[:, 0].reshape(c.heads * d, -1), d, perm)
@@ -193,7 +198,8 @@ class GatedAttention:
 
         c = self.model.cfg
         qkv = ops.linear(h, self.wqkv, ops.fidelity_for(self.qkv_fmt), ttnn.L1_MEMORY_CONFIG)
-        qkv = ttnn.reshape(qkv, (1, 1, 1, qkv.shape[-1]), (1, 1, TILE, qkv.shape[-1]))
+        users = mcs["users"]  # one decode row, or a verify's T rows as T users
+        qkv = ttnn.reshape(qkv, (1, 1, users, qkv.shape[-1]), (1, 1, TILE, qkv.shape[-1]))
         q, k, v = ttnn.experimental.nlp_create_qkv_heads_decode(
             qkv, num_heads=c.heads, num_kv_heads=c.kv_heads, memory_config=mcs["heads"]
         )
@@ -204,15 +210,15 @@ class GatedAttention:
         k = ttnn.experimental.rotary_embedding_hf(
             self._head_norm(k, self.k_norm, True), cos, sin, is_decode_mode=True
         )
-        self.kv.update(k, v, pos)
+        self.kv.update(k, v, pos, users)
         ttnn.deallocate(k)
         ttnn.deallocate(v)
-        a = self.kv.attend(q, pos, 1.0 / math.sqrt(c.head_dim), ops.compute_config("hifi4"))
+        a = self.kv.attend(q, pos, 1.0 / math.sqrt(c.head_dim), ops.compute_config("hifi4"), users)
         ttnn.deallocate(q)
         a = ttnn.to_memory_config(a, mcs["sdpa_out"])
         o = ttnn.experimental.nlp_concat_heads_decode(a, num_heads=c.heads)
         ttnn.deallocate(a)
-        o = ttnn.to_memory_config(o, ttnn.DRAM_MEMORY_CONFIG)
+        o = ops.rows(ttnn.to_memory_config(o, ttnn.DRAM_MEMORY_CONFIG), users)
         return self._gated(o, h)
 
 
@@ -275,7 +281,7 @@ class GatedDeltaNet:
 
         c = self.model.cfg
         ab = ops.linear(h, self.wab, ops.fidelity_for(self.ab_fmt))
-        rows = ab.shape[-2]
+        rows = n
         a = ttnn.slice(ab, [0, 0, 0, 0], [1, 1, rows, c.v_heads])
         b = ttnn.slice(ab, [0, 0, 0, c.v_heads], [1, 1, rows, 2 * c.v_heads])
         ttnn.deallocate(ab)
@@ -368,14 +374,18 @@ class GatedDeltaNet:
         return ttnn.silu(out)
 
     def decode(self, h, cos, sin, pos, mcs):
-        """h [1, 1, 1 (32), dim]: one step of the conv and of the recurrent state."""
+        """h [1, 1, 1 (32), dim]: one step of the conv and of the recurrent state. More rows (a
+        verify's T draft rows) go to _verify, which keeps every row's state until commit()."""
         import ttnn
 
+        if mcs["users"] > 1:
+            return self._verify(h, mcs["users"])
         c = self.model.cfg
         qkv = ops.linear(h, self.wqkv, ops.fidelity_for(self.qkv_fmt))
         z = ops.linear(h, self.wz, ops.fidelity_for(self.z_fmt))
         gdec, beta = self._gates(h, 1)
         k = c.conv
+        qkv = ops.rows(qkv, 1)
         acc = ttnn.multiply(qkv, self.taps[k - 1])
         for j in range(k - 1):
             acc = ttnn.add(acc, ttnn.multiply(self.conv_state[j], self.taps[j]))
@@ -399,24 +409,79 @@ class GatedDeltaNet:
         z = ttnn.reshape(z, (1, 1, c.v_heads, c.v_dim))
         return self._out(o, z)
 
-    def _l2(self, x, heads):
-        """x [1, 1, 1, heads * K] as [1, 1, heads, K], each head scaled to unit L2 norm (HF's
-        l2norm, eps 1e-6): rms_norm with eps / K, divided by sqrt(K)."""
+    def _verify(self, h, T):
+        """T rows at consecutive positions after the state: the conv over the history and the
+        rows, the Gated Delta Rule with the state after every row kept (output_per_token_state);
+        self.state and the conv history stay until commit(a) keeps the first a rows."""
+        import ttnn
+
+        c = self.model.cfg
+        C, k = self.conv_dim, c.conv
+        qkv = ops.linear(h, self.wqkv, ops.fidelity_for(self.qkv_fmt))
+        z = ops.linear(h, self.wz, ops.fidelity_for(self.z_fmt))
+        gdec, beta = self._gates(h, T)
+        rm = ttnn.to_layout(ops.rows(qkv, T), ttnn.ROW_MAJOR_LAYOUT)
+        ttnn.deallocate(qkv)
+        hist = [ttnn.to_layout(s, ttnn.ROW_MAJOR_LAYOUT) for s in self.conv_state]
+        win = ttnn.concat([*hist, rm], dim=2)  # [1, 1, conv - 1 + T, C], oldest first
+        out = None
+        for j in range(k):
+            s = ttnn.to_layout(ttnn.slice(win, [0, 0, j, 0], [1, 1, j + T, C]), ttnn.TILE_LAYOUT)
+            term = ttnn.multiply(s, self.taps[j])
+            out = term if out is None else ttnn.add(out, term)
+        x = ttnn.silu(out)
+        q = self._l2(ttnn.slice(x, [0, 0, 0, 0], [1, 1, T, self.kd]), c.k_heads, T)
+        kk = self._l2(ttnn.slice(x, [0, 0, 0, self.kd], [1, 1, T, 2 * self.kd]), c.k_heads, T)
+        v = ttnn.reshape(
+            ttnn.slice(x, [0, 0, 0, 2 * self.kd], [1, 1, T, C]), (1, T, c.v_heads, c.v_dim)
+        )
+        o, states = ttnn.transformer.fused_recurrent_gated_delta_rule(
+            q, kk, v, gdec, beta, initial_state=self.state, output_per_token_state=True
+        )
+        self._pending = (win, states)
+        o = ttnn.to_layout(ttnn.typecast(o, ttnn.bfloat16), ttnn.TILE_LAYOUT)  # [1, T, HV, V]
+        z = ttnn.reshape(z, (1, T, c.v_heads, c.v_dim))
+        return self._out(o, z)
+
+    def commit(self, a):
+        """Keep the first a rows of the last verify: the state after row a - 1 and the conv's
+        history up to it."""
+        import ttnn
+
+        c = self.model.cfg
+        win, states = self._pending
+        T = states.shape[1]
+        flat = ttnn.reshape(states, (T, c.v_heads, c.k_dim, c.v_dim))
+        ttnn.copy(ttnn.slice(flat, [a - 1, 0, 0, 0], [a, c.v_heads, c.k_dim, c.v_dim]), self.state)
+        for j in range(c.conv - 1):  # win's rows a .. a + conv - 2 are the last conv - 1 inputs
+            row = ttnn.slice(win, [0, 0, a + j, 0], [1, 1, a + j + 1, self.conv_dim])
+            ttnn.copy(ttnn.to_layout(row, ttnn.TILE_LAYOUT), self.conv_state[j])
+        ttnn.deallocate(states)
+        ttnn.deallocate(win)
+        self._pending = None
+
+    def _l2(self, x, heads, rows=1):
+        """x [1, 1, rows, heads * K] as [1, rows, heads, K], each head scaled to unit L2 norm
+        (HF's l2norm, eps 1e-6): rms_norm with eps / K, divided by sqrt(K)."""
         import ttnn
 
         kdim = x.shape[-1] // heads
-        y = ttnn.reshape(x, (1, 1, heads, kdim))
+        y = ttnn.reshape(x, (1, rows, heads, kdim))
         y = ttnn.rms_norm(y, epsilon=1e-6 / kdim, compute_kernel_config=ops.compute_config("hifi4"))
         return ttnn.multiply(y, 1.0 / math.sqrt(kdim))
 
 
 class Qwen35Layer:
-    def __init__(self, model, i):
+    def __init__(self, model, i, prefix=None, fmt=None):
+        """Decoder layer i, or with prefix the MTP's attention layer (its matrices at fmt)."""
         ex, dev = model.export, model.device
-        p = f"{ex.prefix}layers.{i}."
+        p = prefix or f"{ex.prefix}layers.{i}."
         self.model, self.i = model, i
-        self.kind = model.cfg.types[i]
-        self.mix = GatedDeltaNet(model, i) if self.kind == GDN else GatedAttention(model, i)
+        self.kind = ATTN if prefix else model.cfg.types[i]
+        if self.kind == GDN:
+            self.mix = GatedDeltaNet(model, i)
+        else:
+            self.mix = GatedAttention(model, i, prefix, fmt)
         self.attn_norm = ops.norm_weight(dev, ex.get(p + "input_layernorm.weight"), 1.0)
         self.mlp_norm = ops.norm_weight(dev, ex.get(p + "post_attention_layernorm.weight"), 1.0)
         f = ex.formats
@@ -425,21 +490,23 @@ class Qwen35Layer:
             ex.get(p + "mlp.gate_proj.weight"),
             ex.get(p + "mlp.up_proj.weight"),
             ex.get(p + "mlp.down_proj.weight"),
-            [f[(i, f"mlp.{n}_proj")] for n in ("gate", "up", "down")],
+            [fmt or f[(i, f"mlp.{n}_proj")] for n in ("gate", "up", "down")],
         )
 
     def _rest(self, x, y):
         import ttnn
 
         c = self.model.cfg
-        x = ttnn.add(x, y)
+        n = x.shape[-2]  # both sides of each add at x's rows
+        s = ttnn.add(x, ops.rows(y, n))
         ttnn.deallocate(y)
-        h = ops.rms_norm(x, self.mlp_norm, c.eps)
-        m = self.mlp(h)
+        ttnn.deallocate(x)  # the layer's input, made by the step before it
+        h = ops.rms_norm(s, self.mlp_norm, c.eps)
+        m = ops.rows(self.mlp(h), n)
         ttnn.deallocate(h)
-        out = ttnn.add(x, m)
+        out = ttnn.add(s, m)
         ttnn.deallocate(m)
-        ttnn.deallocate(x)
+        ttnn.deallocate(s)
         return out
 
     def prefill(self, x, cos, sin, n=None):
@@ -453,7 +520,7 @@ class Qwen35Layer:
     def decode(self, x, cos, sin, pos, mcs):
         import ttnn
 
-        h = ops.rms_norm(x, self.attn_norm, self.model.cfg.eps)
+        h = ops.rows(ops.rms_norm(x, self.attn_norm, self.model.cfg.eps), mcs["users"])
         y = self.mix.decode(h, cos, sin, pos, mcs)
         ttnn.deallocate(h)
         return self._rest(x, y)
@@ -480,7 +547,8 @@ class Qwen35:
         self.rope = Qwen35Rope(device, c, max_seq)
         ids = range(c.layers) if layers is None else layers
         self.layers = {i: Qwen35Layer(self, i) for i in ids}
-        self.mcs = Qwen3._decode_configs(self)
+        self._mcs = {}
+        self.mcs = Qwen3.decode_configs(self, 1)
         if head:
             ex = export
             self.embedding = ttnn.as_tensor(
@@ -500,6 +568,79 @@ class Qwen35:
         return x
 
 
+class Mtp:
+    """Qwen3.5's multi-token prediction module, drafting on the device: fc over
+    [pre_fc_norm_embedding(embedding of the next token); pre_fc_norm_hidden(the model's row)], one
+    gated full-attention layer with its own paged KV cache, mtp.norm, then the model's own head and
+    argmax. Its matrices are bf16 in the export (quant4.json does not list them) and are packed at
+    fmt (bf16 by default: exact)."""
+
+    def __init__(self, model, fmt="bf16"):
+        ex, dev = model.export, model.device
+        self.model = model
+        self.fc = ops.matrix(dev, ex.get("mtp.fc.weight"), fmt)
+        self.norm_e = ops.norm_weight(dev, ex.get("mtp.pre_fc_norm_embedding.weight"), 1.0)
+        self.norm_h = ops.norm_weight(dev, ex.get("mtp.pre_fc_norm_hidden.weight"), 1.0)
+        self.norm = ops.norm_weight(dev, ex.get("mtp.norm.weight"), 1.0)
+        self.layer = Qwen35Layer(model, -1, prefix="mtp.layers.0.", fmt=fmt)
+
+    def rows(self, hidden, tokens, pos):
+        """hidden [1, 1, n, dim]: the model's last-layer rows (before its final norm) at positions
+        pos .. pos + n - 1; tokens: the token after each. The rows go through fc, the MTP layer
+        (writing its KV at those positions: a prompt from position 0 as a prefill, at most 8 rows
+        later as a decode of n users) and mtp.norm. Returns (the normed rows, the draft id after
+        the last row)."""
+        import ttnn
+
+        m, c = self.model, self.model.cfg
+        n = len(tokens)
+        prompt = pos == 0 and n > 1
+        e = m.embed(m.ids(tokens), rows=None if prompt else n)
+        cat = ttnn.concat(
+            [ops.rms_norm(e, self.norm_e, c.eps), ops.rms_norm(hidden, self.norm_h, c.eps)], dim=-1
+        )
+        ttnn.deallocate(e)
+        x = ops.linear(cat, self.fc)
+        ttnn.deallocate(cat)
+        if prompt:
+            cos, sin = m.rope.prefill(0, x.shape[-2])
+            y = self.layer.prefill(x, cos, sin, n)
+        else:
+            mcs = m.decode_configs(n)
+            p = torch.arange(pos, pos + n, dtype=torch.int32)
+            cur = ttnn.from_torch(p, dtype=ttnn.int32, device=m.device)
+            idx = ttnn.from_torch(
+                p.reshape(1, n), dtype=ttnn.uint32, layout=ttnn.ROW_MAJOR_LAYOUT, device=m.device
+            )
+            cos, sin = m.rope.decode(idx, mcs["rope"])
+            y = self.layer.decode(x, cos, sin, cur, mcs)
+        y = ops.rms_norm(y, self.norm, c.eps)
+        last = n - 1
+        start = last // TILE * TILE
+        top = m._top1(ttnn.slice(y, [0, 0, start, 0], [1, 1, start + TILE, c.dim]))
+        draft = int(ttnn.to_torch(top).reshape(-1)[last - start])
+        ttnn.deallocate(top)
+        return y, draft
+
+    def draft(self, hidden, tokens, pos, k):
+        """rows(), then k - 1 chained steps, each on the previous call's last normed row and its
+        draft: the k draft tokens after tokens[-1]."""
+        import ttnn
+
+        y, d = self.rows(hidden, tokens, pos)
+        out, p, n = [d], pos + len(tokens), len(tokens)
+        for _ in range(k - 1):
+            # a slice of the whole tensor may be the tensor itself: y is freed after its use
+            last = ttnn.slice(y, [0, 0, n - 1, 0], [1, 1, n, y.shape[-1]])
+            y_next, d = self.rows(last, [d], p)
+            ttnn.deallocate(y)
+            y = y_next
+            out.append(d)
+            p, n = p + 1, 1
+        ttnn.deallocate(y)
+        return out
+
+
 def _borrow():
     """Qwen35 takes Qwen3's device-side helpers (ids, embed, positions, decode, head, prefill,
     traces), which only touch the attributes both classes set."""
@@ -517,22 +658,40 @@ def _borrow():
         "decode",
         "decode_traced",
         "release_trace",
-        "_decode_configs",
+        "decode_configs",
+        "verify",
     ):
         setattr(Qwen35, name, getattr(Qwen3, name))
 
-    def prefill(self, tokens):
+    def prefill_hidden(self, tokens):
+        """The prompt's KV rows and states, the greedy token after it, and the last layer's rows
+        [1, 1, T, dim] (before the final norm; the caller frees them)."""
         import ttnn
 
         x = self.prefill_layers(self.embed(self.ids(tokens)), len(tokens))
         last = len(tokens) - 1
         start = last // TILE * TILE
         rows = ttnn.slice(x, [0, 0, start, 0], [1, 1, start + TILE, self.cfg.dim])
-        out = self.top1(rows)[last - start]
+        return self.top1(rows)[last - start], x
+
+    def prefill(self, tokens):
+        import ttnn
+
+        out, x = self.prefill_hidden(tokens)
         ttnn.deallocate(x)
         return out
 
+    Qwen35.prefill_hidden = prefill_hidden
     Qwen35.prefill = prefill
+
+    def commit(self, a):
+        """Keep the first a rows of the last verify (the attention layers' rows past them are
+        written over later)."""
+        for layer in self.layers.values():
+            if layer.kind == GDN:
+                layer.mix.commit(a)
+
+    Qwen35.commit = commit
 
 
 _borrow()

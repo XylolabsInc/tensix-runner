@@ -121,3 +121,26 @@ def check_layers(model, tokens, prefill_n, layers, log=print):
                 f"max diff {out[(i, p)][1]:.4g} ({time.monotonic() - t0:.0f} s)"
             )
     return out
+
+
+def check_verify(model, tokens, n, T, keep=2, log=print):
+    """A verify of T teacher-forced rows against T decode steps, on the same prompt: the greedy
+    ids must agree row for row, and after commit(keep) the next decode step must give the
+    sequential run's id at that position. Before the verify, a verify of other tokens fills the
+    same KV rows, so a row the real verify fails to write shows. Returns (verify ids, sequential
+    ids, id after commit)."""
+    assert n + T <= len(tokens) and 0 < keep < T
+    rows = tokens[n : n + T]
+    t0 = time.monotonic()
+    model.prefill(tokens[:n])
+    model.verify([tokens[0]] * T, n)  # other K and V in rows n .. n + T - 1, not committed
+    model.prefill(tokens[:n])
+    ver, _ = model.verify(rows, n)
+    model.commit(keep)
+    after = model.decode(rows[keep], n + keep)
+    log(f"verify: {ver}, after commit({keep}): {after} ({time.monotonic() - t0:.0f} s)")
+    t0 = time.monotonic()
+    model.prefill(tokens[:n])
+    seq = [model.decode(t, n + j) for j, t in enumerate(rows)]
+    log(f"sequential: {seq} ({time.monotonic() - t0:.0f} s)")
+    return ver, seq, after
