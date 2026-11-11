@@ -17,7 +17,11 @@ Wormhole and Blackhole, through upstream ttnn. The README covers installing, che
 | `tensix_runner/bfp.py` | the BFP grids in torch, for checks without ttnn |
 | `tensix_runner/weights.py` | packing at the export's format with `ttnn.as_tensor`, and the exactness check |
 | `tensix_runner/device.py` | opening a chip; its arch, grid, DRAM banks and L1, read from the device |
-| `tensix_runner/cli.py` | `tensix-runner download`, `info`, `check` |
+| `tensix_runner/ops.py`, `rope.py` | compute configs, matrices, RMSNorm, SwiGLU; HF-style RoPE tables on the device |
+| `tensix_runner/models/` | one module per family (`qwen3.py`), chosen by the checkpoint's `model_type` |
+| `tensix_runner/generate.py` | the chat template (Jinja2, as transformers renders it), stop tokens, the greedy loop |
+| `tensix_runner/pcc.py` | layer and greedy-token checks against transformers on the same export |
+| `tensix_runner/cli.py` | `tensix-runner download`, `info`, `check`, `pcc`, `run`, `chat`, `bench` |
 | `scripts/` | `install.sh` (venv, ttnn, SFPI, ttsim), `ttsim.sh` (the simulator's environment), `download.sh` |
 | `tests/` | pytest; `device`-marked tests need ttnn and a card or ttsim, `export`-marked ones an export |
 
@@ -41,7 +45,10 @@ Without ttnn, `pytest` runs the host tests and skips the rest.
 - **Nothing computes on the host.** The embedding lookup, RoPE rows, the LM head, argmax and any
   drafter run on the device. The host tokenizes, schedules and copies token ids.
 - **No device assumptions.** Read the grid, the DRAM bank count and L1 from the device
-  (`device.info`). No card-specific constants.
+  (`device.info`). No card-specific constants. Matmuls on Wormhole accumulate in bf16 (`ops.compute_config`):
+  ttsim's Wormhole stops on fp32 partial sums reloaded into its 19-bit source registers.
+- **A new model** passes `tensix-runner pcc` (each layer at PCC 0.99 or better against transformers, prefill
+  and decode) on ttsim's Blackhole and Wormhole before it is listed as working.
 - **Upstream only.** Use the public ttnn API and public sources (tt-metal, ttnn, ttsim and
   Tenstorrent's docs). A file adapted from elsewhere keeps its copyright line and gets a row in
   `ORIGINS.md`. Nothing you can't publish under Apache-2.0.
