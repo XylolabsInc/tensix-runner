@@ -186,6 +186,7 @@ class GatedAttention:
             is_causal=True,
             scale=1.0 / math.sqrt(c.head_dim),
             compute_kernel_config=ops.compute_config("hifi4"),
+            program_config=ops.sdpa_config(self.model.device),
         )
         for t in (q, k, v):
             ttnn.deallocate(t)

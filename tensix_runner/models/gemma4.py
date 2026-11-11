@@ -197,6 +197,7 @@ class Gemma4Layer:
             scale=1.0,
             sliding_window_size=self.window,
             compute_kernel_config=ops.compute_config("hifi4"),
+            program_config=ops.sdpa_config(self.model.device),
         )
         ttnn.deallocate(q)
         if self.kv is not None and self.i not in m.kv_sources:

@@ -37,6 +37,22 @@ def compute_config(fidelity="hifi4", matmul=False):
     )
 
 
+def sdpa_config(device, k_chunk=32):
+    """SDPA's program config with the exact exponential: ttnn's SDPA ops take the approximate one
+    unless a program config says otherwise (math_approx_mode does not reach it). Chunks of 32
+    query rows and k_chunk key rows; decode passes its own k_chunk, never 0 (with a program config,
+    0 leaves the chunk to the kernels, which then misplace a sliding window shorter than the
+    cache: PCC 0.5-0.8 against torch for a window of 32 on ttsim)."""
+    import ttnn
+
+    return ttnn.SDPAProgramConfig(
+        compute_with_storage_grid_size=device.compute_with_storage_grid_size(),
+        q_chunk_size=32,
+        k_chunk_size=k_chunk,
+        exp_approx_mode=False,
+    )
+
+
 def matrix(device, w, fmt):
     """A PyTorch [out, in] weight on the device as [in, out] at fmt, in DRAM (packed exactly)."""
     import ttnn
@@ -84,9 +100,11 @@ def linear(x, w, fidelity="hifi4", mc=None):
 
 
 def fidelity_for(fmt):
-    """The matmul fidelity that keeps a weight format's products exact enough: HiFi2 covers
-    BFP4's 4-bit mantissas, HiFi4 the wider ones."""
-    return "hifi2" if fmt == "bfp4" else "hifi4"
+    """The matmul fidelity for a weight format: HiFi4 for every format. The fidelity phases split
+    the bf16 activations as well as the weights, so a narrow weight format does not make HiFi2
+    exact: with HiFi2 on the BFP4 matrices, Gemma 4 E2B's layer outputs in a whole prefill sat
+    about twice as far from transformers' float32 ones as with HiFi3 or HiFi4."""
+    return "hifi4"
 
 
 class SwiGLU:

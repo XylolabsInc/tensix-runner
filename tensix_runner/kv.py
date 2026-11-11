@@ -10,6 +10,8 @@ decode attention gives each row exactly its causal context."""
 
 import torch
 
+from . import ops
+
 BLOCK = 32
 
 
@@ -20,6 +22,9 @@ class PagedKV:
         assert max_seq % BLOCK == 0, f"max_seq {max_seq} is not a multiple of {BLOCK}"
         self.device, self.blocks = device, max_seq // BLOCK
         self.head_dim, self._one = head_dim, None
+        # decode's key chunk: a power of two that divides max_seq, at most 512 and at most 32768
+        # values of K a chunk (a chunk of 256 at head_dim 512 overflows a Blackhole core's L1)
+        self._sdpa = ops.sdpa_config(device, min(512, max_seq & -max_seq, 32768 // head_dim))
         shape = [self.blocks, kv_heads, BLOCK, head_dim]
         kw = {"dtype": ttnn.bfloat16, "layout": ttnn.TILE_LAYOUT, "device": device}
         self.k = ttnn.zeros(shape, memory_config=ttnn.DRAM_MEMORY_CONFIG, **kw)
@@ -98,6 +103,7 @@ class PagedKV:
             cur_pos_tensor=pos,
             scale=scale,
             compute_kernel_config=ckc,
+            program_config=self._sdpa,
             sliding_window_size=window,
             memory_config=ttnn.DRAM_MEMORY_CONFIG,
         )
