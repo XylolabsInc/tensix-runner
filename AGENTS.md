@@ -19,6 +19,7 @@ Wormhole and Blackhole, through upstream ttnn. The README covers installing, che
 | `tensix_runner/device.py` | opening a chip; its arch, grid, DRAM banks and L1, read from the device |
 | `tensix_runner/ops.py`, `rope.py` | compute configs, matrices, RMSNorm, the gated MLPs (SiLU, GELU tanh); HF-style RoPE tables on the device |
 | `tensix_runner/kv.py` | the paged KV cache of an attention layer |
+| `tensix_runner/kernels.py` | the optional tensix-kernels path (`--kernels`): the dense reader for the matrices, the device head |
 | `tensix_runner/models/` | one module per family (`qwen3.py`, `qwen35.py`, `gemma4.py`), chosen by the checkpoint's `model_type` |
 | `tensix_runner/generate.py` | the chat template (Jinja2, as transformers renders it), stop tokens, the greedy and MTP-drafted loops |
 | `tensix_runner/pcc.py` | layer and greedy-token checks against transformers on the same export |
