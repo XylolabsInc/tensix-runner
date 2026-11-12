@@ -47,8 +47,7 @@ Without ttnn, `pytest` runs the host tests and skips the rest.
 - **Nothing computes on the host.** The embedding lookup, RoPE rows, the LM head, argmax and any
   drafter run on the device. The host tokenizes, schedules and copies token ids.
 - **No device assumptions.** Read the grid, the DRAM bank count and L1 from the device
-  (`device.info`). No card-specific constants. Matmuls on Wormhole accumulate in bf16 (`ops.compute_config`):
-  ttsim's Wormhole stops on fp32 partial sums reloaded into its 19-bit source registers.
+  (`device.info`). No card-specific constants.
 - **A new model** passes `tensix-runner pcc` (each layer at PCC 0.99 or better against transformers, prefill
   and decode) on ttsim's Blackhole and Wormhole before it is listed as working.
 - **Upstream only.** Use the public ttnn API and public sources (tt-metal, ttnn, ttsim and
