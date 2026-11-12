@@ -38,10 +38,11 @@ fi
 "${pip[@]}" -e ".[ttnn,ref,test]"
 rt=$("$venv/bin/python" -c 'import os, ttnn; print(os.path.join(os.path.dirname(ttnn.__file__), "runtime"))')
 if [ ! -d "$rt/sfpi" ]; then
-	# the wheel names its SFPI release and the archive's sha256 (tt_metal/sfpi-version, shell assignments)
-	# shellcheck source=/dev/null
-	. "$(dirname "$rt")/tt_metal/sfpi-version"
-	[ "${sfpi_version:-}" = "$SFPI_VERSION" ] || { echo "the ttnn wheel names SFPI ${sfpi_version:-?}, not $SFPI_VERSION" >&2; exit 1; }
+	# the wheel names its SFPI release and the archive's sha256 (tt_metal/sfpi-version, NAME='VALUE' lines), read without running it
+	sv=$(dirname "$rt")/tt_metal/sfpi-version
+	sfpi_version=$(sed -n "s/^sfpi_version='\\([^']*\\)'\$/\\1/p" "$sv")
+	sfpi_x86_64_debian_txz_hash=$(sed -n "s/^sfpi_x86_64_debian_txz_hash='\\([0-9a-f]*\\)'\$/\\1/p" "$sv")
+	[ "$sfpi_version" = "$SFPI_VERSION" ] || { echo "the ttnn wheel names SFPI ${sfpi_version:-?}, not $SFPI_VERSION" >&2; exit 1; }
 	tmp=$(mktemp -d)
 	curl -fsSL -o "$tmp/sfpi.txz" \
 		"https://github.com/tenstorrent/sfpi/releases/download/$SFPI_VERSION/sfpi_${SFPI_VERSION}_x86_64_debian.txz"
