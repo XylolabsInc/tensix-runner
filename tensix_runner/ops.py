@@ -2,6 +2,8 @@
 # Copyright 2026 Xylolabs
 """Small building blocks on ttnn shared by the models: compute configs, matrices, norms and the MLP."""
 
+import os
+
 import torch
 
 from . import kernels, weights
@@ -9,20 +11,23 @@ from . import kernels, weights
 TILE = 32
 
 
-# Wormhole's source registers hold 19 bits, so a matmul that reloads fp32 partial sums into them is
-# undefined there (ttsim's Wormhole stops on it); matmuls on Wormhole accumulate in bf16 instead
-_ARCH = {"wormhole": False}
+# ttsim's Wormhole stops on a matmul that reloads fp32 partial sums ("UndefinedBehavior: tensix_unpacr"),
+# so matmuls on the simulated Wormhole accumulate in bf16. A Wormhole card keeps fp32 accumulation, as
+# tt-metal's own model configs do there; this runner has not been checked on a card yet.
+_ARCH = {"bf16_matmul": False}
 
 
 def set_arch(device):
-    """Record the device's architecture for compute_config (called once per model load)."""
+    """Record whether matmuls accumulate in bf16 (ttsim's Wormhole) for compute_config; called
+    once per model load."""
     import ttnn
 
-    _ARCH["wormhole"] = device.arch() == ttnn.device.Arch.WORMHOLE_B0
+    simulated = bool(os.environ.get("TT_METAL_SIMULATOR"))
+    _ARCH["bf16_matmul"] = simulated and device.arch() == ttnn.device.Arch.WORMHOLE_B0
 
 
 def compute_config(fidelity="hifi4", matmul=False):
-    """A compute config without approximations: fp32 accumulation, except for matmuls on
+    """A compute config without approximations: fp32 accumulation, except for matmuls on ttsim's
     Wormhole (see _ARCH)."""
     import ttnn
 
@@ -31,7 +36,7 @@ def compute_config(fidelity="hifi4", matmul=False):
         "hifi2": ttnn.MathFidelity.HiFi2,
         "hifi4": ttnn.MathFidelity.HiFi4,
     }[fidelity]
-    fp32 = not (matmul and _ARCH["wormhole"])
+    fp32 = not (matmul and _ARCH["bf16_matmul"])
     return ttnn.WormholeComputeKernelConfig(
         math_fidelity=f, math_approx_mode=False, fp32_dest_acc_en=fp32, packer_l1_acc=True
     )
