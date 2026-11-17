@@ -344,7 +344,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="tensix-runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("download", help="fetch an export from Hugging Face")
-    p.add_argument("name", help="the export's name, e.g. Qwen3-4B-Tensix-BFP4")
+    p.add_argument("name", help="the export's name, e.g. Qwen3-4B-Tenstorrent-Tensix-BFP4")
     p.add_argument("--repo", help=f"the full repo id (default {HF_NAMESPACE}/NAME)")
     p.add_argument("--dir", help="where to put it (default exports/NAME)")
     p.set_defaults(fn=cmd_download)

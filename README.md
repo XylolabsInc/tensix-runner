@@ -71,7 +71,7 @@ card.
 ## Get an export
 
 ```
-tensix-runner download Qwen3-4B-Tensix-BFP4          # from Xylolabs/Qwen3-4B-Tensix-BFP4 into exports/
+tensix-runner download Qwen3-4B-Tenstorrent-Tensix-BFP4  # from Xylolabs/Qwen3-4B-Tenstorrent-Tensix-BFP4 into exports/
 tensix-runner download NAME --repo ORG/NAME --dir DIR
 ```
 
@@ -81,9 +81,9 @@ bf16 model. `quant4.json` in the export names each projection's format; the runn
 ## Run
 
 ```
-tensix-runner run exports/Qwen3-4B-Tensix-BFP4 "What is the capital of France?"
-tensix-runner chat exports/Qwen3-4B-Tensix-BFP4 --system "You are concise."
-tensix-runner bench exports/Qwen3-4B-Tensix-BFP4 --pp 512 --tg 128 --depth 0
+tensix-runner run exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 "What is the capital of France?"
+tensix-runner chat exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --system "You are concise."
+tensix-runner bench exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --pp 512 --tg 128 --depth 0
 ```
 
 `run` and `chat` render the checkpoint's own chat template (`--think` turns on thinking where the
@@ -94,7 +94,7 @@ replays the decode step from a trace (a card only).
 ## Kernels (optional)
 
 ```
-tensix-runner run exports/gemma-4-E2B-it-Tensix-BFP4-MLP "Hello" --kernels ../tensix-kernels
+tensix-runner run exports/gemma-4-E2B-it-Tenstorrent-Tensix-BFP4-MLP "Hello" --kernels ../tensix-kernels
 export TENSIX_KERNELS=../tensix-kernels      # the same for every command
 ```
 
@@ -106,9 +106,9 @@ device. `--trace` does not take the kernels' head yet.
 
 ```
 pip install -e ".[ref]"
-tensix-runner pcc exports/Qwen3-4B-Tensix-BFP4 --layers 0,17,35 --prefill 32 --decode 2
-tensix-runner pcc exports/Qwen3-4B-Tensix-BFP4 --greedy 8
-tensix-runner pcc exports/gemma-4-E2B-it-Tensix-BFP4-MLP --drift
+tensix-runner pcc exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --layers 0,17,35 --prefill 32 --decode 2
+tensix-runner pcc exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --greedy 8
+tensix-runner pcc exports/gemma-4-E2B-it-Tenstorrent-Tensix-BFP4-MLP --drift
 ```
 
 `--layers` runs each listed layer on transformers' own inputs and prints its PCC and largest
@@ -123,9 +123,9 @@ size in memory.
 ## Check an export
 
 ```
-tensix-runner check exports/Qwen3-4B-Tensix-BFP4 --host     # torch alone: every matrix on its grid
-tensix-runner check exports/Qwen3-4B-Tensix-BFP4            # through ttnn's packer
-tensix-runner check exports/Qwen3-4B-Tensix-BFP4 --device   # and through device DRAM and back
+tensix-runner check exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --host     # torch alone: every matrix on its grid
+tensix-runner check exports/Qwen3-4B-Tenstorrent-Tensix-BFP4            # through ttnn's packer
+tensix-runner check exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --device   # and through device DRAM and back
 ```
 
 Each matrix is transposed to `[in, out]`, the layout TT-NN's matmul reads, packed at its format and
@@ -135,7 +135,7 @@ unpacked again; the check passes when every value comes back bit for bit. `--lay
 
 ```
 pytest                               # host tests; the device tests need ttnn and a card or ttsim
-TENSIX_RUNNER_EXPORT=exports/Qwen3-4B-Tensix-BFP4 pytest -m export
+TENSIX_RUNNER_EXPORT=exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 pytest -m export
 ```
 
 ## License
