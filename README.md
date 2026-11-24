@@ -26,6 +26,8 @@ v0.81.1. The embedding lookup, the LM head and its argmax, and the drafter of mo
 prediction run on the device; the host tokenizes and schedules. Not affiliated with or endorsed by
 Tenstorrent.
 
+[DEVELOPMENT.md](DEVELOPMENT.md) says how this repository is developed, from Tenstorrent's open software stack only; [ORIGINS.md](ORIGINS.md) says where every file comes from and how that was checked.
+
 ## Models
 
 | Family | Exports | Chips |
