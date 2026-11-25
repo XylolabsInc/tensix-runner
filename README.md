@@ -42,7 +42,7 @@ a card. `--trace` (decode replayed from a trace) needs a card and has not run ye
 ## Install
 
 Linux x86_64 and Python 3.12: ttnn 0.81.1 ships wheels for CPython 3.12 (and 3.10) on Linux x86_64
-only, so newer Python versions wait on Tenstorrent's wheels.
+only.
 
 ```
 git clone https://github.com/XylolabsInc/tensix-runner.git && cd tensix-runner
@@ -55,8 +55,7 @@ source .venv/bin/activate
 the `python3.12-venv` package).
 
 `install.sh` unpacks SFPI 7.89.0, tt-metal v0.81.1's compiler for the Tensix cores, into ttnn's
-`runtime` directory, because the wheel does not include it and `python -m ttnn.download_sfpi` does
-not work in 0.81.1. A card also needs Tenstorrent's driver and firmware
+`runtime` directory; `python -m ttnn.download_sfpi` does not work in 0.81.1. A card also needs Tenstorrent's driver and firmware
 ([tt-installer](https://github.com/tenstorrent/tt-installer)).
 
 **Without a card,** ttsim stands in for one:
@@ -67,8 +66,7 @@ source scripts/ttsim.sh bh         # TT_METAL_SIMULATOR, slow dispatch
 tensix-runner info                 # e.g. "blackhole (simulated): compute grid ..."
 ```
 
-ttsim runs slow dispatch only, so traced decoding does not run on it, and it is much slower than a
-card.
+ttsim runs slow dispatch only, so traced decoding does not run on it.
 
 ## Get an export
 
@@ -77,16 +75,14 @@ tensix-runner download Qwen3-4B-Tenstorrent-Tensix-BFP4  # from Xylolabs/Qwen3-4
 tensix-runner download NAME --repo ORG/NAME --dir DIR
 ```
 
-Each export's model card lists its formats per tensor class, its size and its accuracy against the
-bf16 model. `quant4.json` in the export names each projection's format; the runner reads it.
+`quant4.json` in the export names each projection's format.
 
 The LM head is the tensor that `quant4.json`'s `lm_head_tensor` names, for a head stored under a
 name such as `language_model.lm_head.weight`. If that field names a missing `lm_head.weight`
 tensor (or is not a string), loading stops with an error; `null` counts as not declared. Without
 the field the head is `lm_head.weight`, or else the embedding when `config.json` sets
 `tie_word_embeddings` to true (at the top level or in `text_config`). A checkpoint with no head
-tensor that does not say it ties its embedding fails with an error; the embedding is never used
-silently as an untied head.
+tensor that does not say it ties its embedding fails with an error.
 
 ## Run
 
@@ -98,7 +94,7 @@ tensix-runner bench exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --pp 512 --tg 128 -
 
 `run` and `chat` render the checkpoint's own chat template (`--think` turns on thinking where the
 template has it) and decode greedily, with the argmax on the device. `bench` times prefill (`pp`)
-and decode (`tg`) in llama-bench's terms on the device you run it on. `--trace` on any of them
+and decode (`tg`) in llama-bench's terms. `--trace` on any of them
 replays the decode step from a trace (a card only).
 
 `--max-new 0` prefills nothing and prints nothing; a negative `--max-new` is an error. `bench`
@@ -131,8 +127,8 @@ tensix-runner pcc exports/gemma-4-E2B-it-Tenstorrent-Tensix-BFP4-MLP --drift
 difference (a layer that reads an earlier layer's KV cache brings that layer along). `--greedy`
 has the device decode transformers' greedy tokens and compares every step's token; a difference
 counts as a tie when transformers' two logits lie within one bfloat16 step. `--drift` compares
-every layer's output within one whole-model prefill, where errors add up. `--window 32` sets
-Gemma 4's sliding window on both sides, so that a short prompt reaches the window's edge.
+every layer's output within one whole-model prefill. `--window 32` sets
+Gemma 4's sliding window on both sides.
 `--greedy N` always compares exactly N steps: the reference does not stop at an end-of-sequence
 token, the device decodes the reference's tokens (an end-of-sequence token is an ordinary token
 there), and the sequence length covers the prompt plus N. `pcc` with none of `--layers`,
@@ -150,7 +146,7 @@ tensix-runner check exports/Qwen3-4B-Tenstorrent-Tensix-BFP4            # throug
 tensix-runner check exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --device   # and through device DRAM and back
 ```
 
-Each matrix is transposed to `[in, out]`, the layout TT-NN's matmul reads, packed at its format and
+Each matrix is transposed to `[in, out]`, packed at its format and
 unpacked again; the check passes when every value comes back bit for bit. Every matrix includes the
 LM head, the tensor `lm_head_tensor` or the tie rules pick, at the format `quant4.json` gives it. A
 bf16 matrix, head or projection, is checked with `--host` only. `--layers 0,1` limits the layers;
