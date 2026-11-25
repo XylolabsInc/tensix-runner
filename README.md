@@ -80,6 +80,14 @@ tensix-runner download NAME --repo ORG/NAME --dir DIR
 Each export's model card lists its formats per tensor class, its size and its accuracy against the
 bf16 model. `quant4.json` in the export names each projection's format; the runner reads it.
 
+The LM head is the tensor that `quant4.json`'s `lm_head_tensor` names, for a head stored under a
+name such as `language_model.lm_head.weight`. If that field names a missing `lm_head.weight`
+tensor (or is not a string), loading stops with an error; `null` counts as not declared. Without
+the field the head is `lm_head.weight`, or else the embedding when `config.json` sets
+`tie_word_embeddings` to true (at the top level or in `text_config`). A checkpoint with no head
+tensor that does not say it ties its embedding fails with an error; the embedding is never used
+silently as an untied head.
+
 ## Run
 
 ```

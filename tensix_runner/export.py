@@ -99,9 +99,37 @@ class Export:
         return f"{self.prefix}embed_tokens.weight"
 
     @property
+    def tied(self):
+        """tie_word_embeddings from config.json's top level, else from its text_config; false
+        where neither sets it (the field has no default of "tied")."""
+        value = self.config.get("tie_word_embeddings")
+        if value is None:
+            nested = self.config.get("text_config")
+            value = nested.get("tie_word_embeddings") if isinstance(nested, dict) else None
+        return value is True
+
+    @property
     def head_name(self):
-        """lm_head.weight, or the embedding where the checkpoint ties its head to it."""
-        return "lm_head.weight" if "lm_head.weight" in self.weight_map else self.embed_name
+        """The LM head's tensor name: quant4.json's `lm_head_tensor` where the checkpoint holds it,
+        else `lm_head.weight`, else the embedding where `tie_word_embeddings` is true."""
+        declared = self.manifest.get("lm_head_tensor")
+        if declared is not None and not isinstance(declared, str):  # null counts as absent
+            raise ExportError(f"{self.root}: lm_head_tensor {declared!r} is not a tensor name")
+        if declared in self.weight_map:
+            return declared
+        if declared is not None and declared.split(".")[-2:] == ["lm_head", "weight"]:
+            raise ExportError(
+                f"{self.root}: quant4.json's lm_head_tensor names {declared}, which the "
+                "checkpoint does not hold"
+            )
+        if "lm_head.weight" in self.weight_map:
+            return "lm_head.weight"
+        if self.tied:
+            return self.embed_name
+        raise ExportError(
+            f"{self.root}: no LM head tensor (lm_head.weight is missing) and tie_word_embeddings "
+            "is not true; set lm_head_tensor in quant4.json to the head's tensor name"
+        )
 
     def matrices(self, layers=None):
         """(layer, projection, format, tensor name) of every projection quant4.json lists, in order."""

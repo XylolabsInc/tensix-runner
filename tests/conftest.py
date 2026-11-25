@@ -40,15 +40,17 @@ def export_dir():
     return Path(d)
 
 
-def write_export(root, tensors, layers, config, lm_head="bf16", index=True):
+def write_export(root, tensors, layers, config, lm_head="bf16", index=True, **manifest):
     """A synthetic export: tensors {name: tensor} in two shards (or one model.safetensors),
-    quant4.json with layers {layer: {proj: format or {"format", "online"}}}, and config.json."""
+    quant4.json with layers {layer: {proj: format or {"format", "online"}}} plus any extra
+    top-level fields (lm_head_tensor), and config.json."""
     from safetensors.torch import save_file
 
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     (root / "config.json").write_text(json.dumps(config))
-    (root / "quant4.json").write_text(json.dumps({"layers": layers, "lm_head": lm_head}))
+    quant4 = {"layers": layers, "lm_head": lm_head, **manifest}
+    (root / "quant4.json").write_text(json.dumps(quant4))
     names = sorted(tensors)
     if not index:
         save_file({n: tensors[n] for n in names}, root / "model.safetensors")
@@ -82,5 +84,10 @@ def tiny_export(tmp_path):
         tensors[f"model.layers.{i}.self_attn.q_proj.weight"] = on("bfp8", 64, 32)
         tensors[f"model.layers.{i}.mlp.down_proj.weight"] = on("bfp4", 32, 64)
     tensors["model.embed_tokens.weight"] = torch.randn(64, 32, generator=g).to(torch.bfloat16)
-    cfg = {"model_type": "qwen3", "num_hidden_layers": 2, "hidden_size": 32}
+    cfg = {
+        "model_type": "qwen3",
+        "num_hidden_layers": 2,
+        "hidden_size": 32,
+        "tie_word_embeddings": True,
+    }
     return write_export(tmp_path / "tiny", tensors, layers, cfg)

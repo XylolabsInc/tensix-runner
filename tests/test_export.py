@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Xylolabs
-"""Export loading on synthetic exports: formats, prefixes, the tied head, refusals, and the host check."""
+"""Export loading on synthetic exports: formats, prefixes, the head's name and tie rules, refusals,
+and the host check."""
 
 import json
 
@@ -101,3 +102,100 @@ def test_unknown_family(tiny_export):
     ex.config["model_type"] = "mamba"
     with pytest.raises(NotImplementedError, match="mamba"):
         load(ex, device=None)
+
+
+def head_export(tmp_path, head=None, tied=None, nested=None, field="absent", embed=None):
+    """An export with one layer, an embedding and optionally a head tensor named `head`;
+    `lm_head_tensor` is set to `field` unless "absent"; `tied` and `nested` set
+    tie_word_embeddings at the top level and in text_config."""
+    g = torch.Generator().manual_seed(5)
+    prefix = "model.language_model." if embed else "model."
+    t = {
+        f"{prefix}layers.0.mlp.up_proj.weight": torch.zeros(32, 32, dtype=torch.bfloat16),
+        embed or "model.embed_tokens.weight": torch.randn(64, 32, generator=g).bfloat16(),
+    }
+    if head:
+        t[head] = torch.randn(64, 32, generator=g).bfloat16()
+    cfg = {"model_type": "qwen3"}
+    if tied is not None:
+        cfg["tie_word_embeddings"] = tied
+    if nested is not None:
+        cfg["text_config"] = {"model_type": "qwen3_text", "tie_word_embeddings": nested}
+    extra = {} if field == "absent" else {"lm_head_tensor": field}
+    d = write_export(tmp_path / "h", t, {"0": {"mlp.up_proj": "bfp4"}}, cfg, **extra)
+    return Export(d)
+
+
+def test_declared_head_name(tmp_path):
+    name = "language_model.lm_head.weight"
+    ex = head_export(tmp_path, head=name, tied=False, field=name)
+    assert ex.head_name == name
+    assert not torch.equal(ex.get(ex.head_name), ex.get(ex.embed_name))
+    assert torch.equal(ex.get(ex.head_name), ex.get(name))
+
+
+@pytest.mark.parametrize(
+    "field", ["language_model.lm_head.weight", "lm_head.weight", 7, True, [], {}]
+)
+def test_declared_head_missing_or_not_a_name(tmp_path, field):
+    ex = head_export(tmp_path, tied=True, field=field)
+    with pytest.raises(ExportError, match="lm_head_tensor"):
+        _ = ex.head_name
+
+
+def test_null_field_counts_as_absent(tmp_path):
+    assert head_export(tmp_path / "a", head="lm_head.weight", tied=False, field=None).head_name == (
+        "lm_head.weight"
+    )
+    assert (
+        head_export(tmp_path / "b", tied=True, field=None).head_name == "model.embed_tokens.weight"
+    )
+    with pytest.raises(ExportError, match="set lm_head_tensor"):
+        _ = head_export(tmp_path / "c", tied=False, field=None).head_name
+
+
+def test_declared_missing_embedding_falls_through(tmp_path):
+    # a tied export names the embedding without the prefix the checkpoint stores
+    ex = head_export(
+        tmp_path,
+        tied=True,
+        field="model.embed_tokens.weight",
+        embed="model.language_model.embed_tokens.weight",
+    )
+    assert ex.head_name == "model.language_model.embed_tokens.weight"
+
+
+@pytest.mark.parametrize("field", ["absent", "lm_head.weight"])
+def test_lm_head_weight_by_name(tmp_path, field):
+    ex = head_export(tmp_path, head="lm_head.weight", tied=False, field=field)
+    assert ex.head_name == "lm_head.weight"
+
+
+def test_no_head_tensor_uses_the_embedding_when_tied(tmp_path):
+    assert head_export(tmp_path, tied=True).head_name == "model.embed_tokens.weight"
+
+
+def test_untied_head_under_another_name_fails(tmp_path):
+    ex = head_export(tmp_path, head="language_model.lm_head.weight", tied=False)
+    with pytest.raises(ExportError, match="lm_head_tensor"):
+        _ = ex.head_name
+
+
+@pytest.mark.parametrize(
+    "tied, nested, ok",
+    [
+        (True, None, True),
+        (None, True, True),
+        (True, False, True),  # the top level wins
+        (None, False, False),
+        (False, True, False),
+        (None, None, False),
+    ],
+)
+def test_tie_word_embeddings_levels(tmp_path, tied, nested, ok):
+    ex = head_export(tmp_path, tied=tied, nested=nested)
+    if ok:
+        assert ex.head_name == ex.embed_name
+    else:
+        with pytest.raises(ExportError, match="set lm_head_tensor"):
+            _ = ex.head_name
