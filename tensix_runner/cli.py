@@ -102,7 +102,25 @@ def cmd_check(a):
     return 1 if bad else 0
 
 
+def _check_pcc_args(a):
+    """Refuse a pcc command line that checks nothing or counts wrongly, before a device opens."""
+    if a.greedy < 0:
+        raise SystemExit(f"--greedy is {a.greedy}: it must be 0 or more")
+    if not (a.layers or a.greedy or a.verify or a.spec or a.drift or a.mtp):
+        raise SystemExit(
+            "pcc checks nothing: give one of --layers, --greedy, --verify, --spec, --drift, --mtp"
+        )
+    if a.spec:
+        from .generate import check_k
+
+        try:
+            check_k(a.k)
+        except ValueError as e:
+            raise SystemExit(f"--k: {e}") from None
+
+
 def cmd_pcc(a):
+    _check_pcc_args(a)
     import ttnn
 
     from . import pcc
@@ -112,7 +130,7 @@ def cmd_pcc(a):
 
     ex = Export(a.export)
     layers = sorted(ints(a.layers)) if a.layers else None
-    n = a.prefill + a.decode
+    n = a.prefill + a.decode + (1 if a.mtp else 0)  # the MTP check reads one token past the prompt
     tokens = pcc.prompt_tokens(ex, n)
     dev = open_device(a.device_id)
     bad = []
@@ -124,7 +142,9 @@ def cmd_pcc(a):
         model = load(
             ex,
             dev,
-            max_seq=max(256, -(-(n + a.verify + a.spec + a.k + 1) // 32) * 32),
+            max_seq=max(
+                256, -(-max(n + a.verify + a.spec + a.k + 1, a.prefill + a.greedy) // 32) * 32
+            ),
             layers=None
             if a.greedy or a.drift or ((a.verify or a.spec) and not layers)
             else layers or [],
@@ -182,7 +202,12 @@ def cmd_pcc(a):
             # within bf16 rounding at one step leaves the later steps comparable
             prompt = tokens[: a.prefill]
             want, logits = pcc.greedy_reference(ex, prompt, a.greedy, overrides)
-            got = [model.prefill(prompt)]
+            if len(want) != a.greedy or len(logits) != a.greedy:
+                raise ValueError(
+                    f"the reference gave {len(want)} tokens and {len(logits)} logits rows, "
+                    f"not the {a.greedy} asked for"
+                )
+            got = [model.prefill(prompt)]  # a stop token is an ordinary token here: N steps run
             for k in range(a.greedy - 1):
                 got.append(model.decode(want[k], a.prefill + k))
             same, ties, wrong = pcc.compare_greedy(got, want, logits)
@@ -215,12 +240,12 @@ class Stream:
             self.shown = text
 
 
-def _open_model(a):
+def _open_model(a, ex=None):
     from .device import info, open_device
     from .export import Export
     from .models import load
 
-    ex = Export(a.export)
+    ex = ex or Export(a.export)
     trace = getattr(a, "trace", False)
     dev = open_device(a.device_id, trace_region_size=a.trace_mb << 20 if trace else 0)
     print(f"device: {info(dev)}", flush=True)
@@ -231,7 +256,7 @@ def _open_model(a):
 
 
 def _summary(out, t_pf, t_dec, n_prompt, trace=False):
-    dec = len(out) - 1
+    dec = max(len(out) - 1, 0)
     rate = f", decode {dec / t_dec:.2f} tok/s" if dec and t_dec > 0 else ""
     how = "traced decode" if trace else "eager, no trace"
     return f"[{n_prompt} prompt tokens in {t_pf:.2f} s, {len(out)} new{rate}; {how}]"
@@ -297,22 +322,38 @@ def cmd_bench(a):
     import ttnn
 
     from . import generate as g
+    from .export import Export
 
-    ex, dev, model = _open_model(a)
+    ex = Export(a.export)
+    tok = g.tokenizer(ex)
+    text = " ".join(["The quick brown fox jumps over the lazy dog."] * 400)
+    ids = tok.encode(text, add_special_tokens=False).ids
+    pps, depths = sorted(ints(a.pp)), sorted(ints(a.depth))
+    for n in pps:  # every length is checked before the device opens, so no partial table prints
+        if n > len(ids):
+            raise SystemExit(f"--pp {n}: only {len(ids)} prompt tokens are available")
+        if n > a.max_seq:
+            raise SystemExit(f"--pp {n} exceeds --max-seq {a.max_seq}")
+    for d in depths:
+        if d > len(ids):
+            raise SystemExit(f"--depth {d}: only {len(ids)} prompt tokens are available")
+        if max(d, 1) + a.tg > a.max_seq:
+            raise SystemExit(
+                f"--depth {d} with --tg {a.tg} needs {max(d, 1) + a.tg} positions, "
+                f"more than --max-seq {a.max_seq}"
+            )
+    ex, dev, model = _open_model(a, ex)
     try:
-        tok = g.tokenizer(ex)
-        text = " ".join(["The quick brown fox jumps over the lazy dog."] * 400)
-        ids = tok.encode(text, add_special_tokens=False).ids
         model.prefill(ids[:32])  # compile the programs once, untimed
         print("| test | depth | tok/s | runs |\n|---|---:|---:|---:|")
-        for n in ints(a.pp):
+        for n in pps:
             rates = []
             for _ in range(a.repeat):
                 t0 = time.perf_counter()
                 model.prefill(ids[:n])
-                rates.append(n / (time.perf_counter() - t0))
+                rates.append(len(ids[:n]) / (time.perf_counter() - t0))  # tokens prefilled
             print(f"| pp{n} | 0 | {statistics.mean(rates):.2f} | {a.repeat} |", flush=True)
-        for d in ints(a.depth):
+        for d in depths:
             rates = []
             for _ in range(a.repeat):
                 t = model.prefill(ids[: max(d, 1)])

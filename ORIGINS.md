@@ -26,7 +26,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `.gitignore` | ours |  | 2 | 0 | ignore patterns |
 | `AGENTS.md` | ours |  | 45 | 0 | instructions for coding agents |
 | `CLAUDE.md` | ours |  | 0 | 0 | symbolic link to AGENTS.md |
-| `README.md` | ours |  | 79 | 0 | documentation |
+| `README.md` | ours |  | 89 | 0 | documentation |
 | `pyproject.toml` | ours |  | 20 | 0 | package metadata |
 | `scripts/download.sh` | ours |  | 5 | 1 |  |
 | `scripts/install.sh` | ours |  | 35 | 1 |  |
@@ -34,22 +34,23 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `tensix_runner/__init__.py` | ours |  | 3 | 1 | tensix-runner: Xylolabs' BFP4/BFP8 Hugging Face exports on Tenstorrent Tensix devices through ttnn |
 | `tensix_runner/__main__.py` | ours |  | 1 | 1 |  |
 | `tensix_runner/bfp.py` | adapted | Xylolabs' tensix-bfp-gptq, `tensix_bfp/bfp.py` at `d67a977`, Apache-2.0 | 24 | 1 | `bfp()` as is; `on_grid()` reduced to the formats the runner loads |
-| `tensix_runner/cli.py` | ours |  | 174 | 8 | tensix-runner's command line |
+| `tensix_runner/cli.py` | ours |  | 192 | 8 | tensix-runner's command line |
 | `tensix_runner/device.py` | ours |  | 25 | 3 |  |
 | `tensix_runner/export.py` | ours |  | 74 | 3 |  |
-| `tensix_runner/generate.py` | ours |  | 59 | 2 | Prompts, stop tokens and the greedy loop |
-| `tensix_runner/kernels.py` | ours |  | 48 | 1 | The optional tensix-kernels path: the dense reader (a weight-streaming matmul launched through ttnn.generic_op) for the model's matrices |
+| `tensix_runner/generate.py` | ours |  | 73 | 2 | Prompts, stop tokens and the greedy loop |
+| `tensix_runner/kernels.py` | ours |  | 51 | 1 | The optional tensix-kernels path: the dense reader (a weight-streaming matmul launched through ttnn.generic_op) for the model's matrices |
 | `tensix_runner/kv.py` | ours |  | 55 | 7 | A layer's paged KV cache for one sequence |
 | `tensix_runner/models/__init__.py` | ours |  | 8 | 1 | The model families, by the checkpoint's model_type |
 | `tensix_runner/models/gemma4.py` | ours |  | 213 | 15 | Gemma 4's text models with per-layer inputs (gemma-4-E2B, gemma-4-E4B) on one chip |
 | `tensix_runner/models/qwen3.py` | ours |  | 191 | 18 | Qwen3 dense (Qwen3-4B, Qwen3-8B) on one chip |
 | `tensix_runner/models/qwen35.py` | ours |  | 335 | 11 | Qwen3.5 (Qwen3.5-4B, Qwen3.5-9B) on one chip: Gated DeltaNet layers and gated attention layers |
 | `tensix_runner/ops.py` | ours |  | 65 | 8 | Small building blocks on ttnn shared by the models: compute configs, matrices, norms and the MLP |
-| `tensix_runner/pcc.py` | ours |  | 155 | 6 | Layer and model checks against transformers on the same export (the `ref` extra) |
+| `tensix_runner/pcc.py` | ours |  | 160 | 6 | Layer and model checks against transformers on the same export (the `ref` extra) |
 | `tensix_runner/rope.py` | ours |  | 36 | 2 | Rotary position embedding in Hugging Face's layout (rotate_half: the first and second halves of each head pair up), for ttnn.experimental.rotary_embedding_hf |
 | `tensix_runner/weights.py` | ours |  | 17 | 2 | Weights packed for TT-NN exactly as the export stores them |
 | `tests/conftest.py` | ours |  | 36 | 5 | Shared fixtures |
 | `tests/test_bfp.py` | ours |  | 21 | 2 | The torch grid check: bfp() on hand-computed blocks and on_grid() on rounded and raw weights |
+| `tests/test_bounds.py` | ours |  | 149 | 1 | Counts and lengths are checked before the runner runs: speculation's k, the greedy check's lengths and allocation, the benchmark's lengths, zero and negative generation counts, and a pcc command line that checks nothing |
 | `tests/test_device.py` | ours |  | 18 | 2 |  |
 | `tests/test_export.py` | ours |  | 148 | 4 | Export loading on synthetic exports: formats, prefixes, the head's name and tie rules, refusals, and the host check |
 | `tests/test_export_device.py` | ours |  | 13 | 1 |  |
@@ -65,7 +66,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 
 ## How it was checked
 
-All counts are from a run on 2026-11-25 over the files of this tree (on `b41bb0f` with this change), against the version
+All counts are from a run on 2026-11-25 over the files of this tree (on `5b9c5c8` with this change), against the version
 this repository pins, tt-metal v0.81.1.
 
 1. **Line comparison.** Every line of 30 or more characters (whitespace-normalized), every line counted and duplicates
@@ -74,10 +75,10 @@ this repository pins, tt-metal v0.81.1.
    transformers v5.13.0 (5,909), the GPTQ reference implementation
    [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) (commit `2d65066`, 41),
    [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) (commit `9f7d370`, 172) and
-   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,166 lines
-   checked, 145 are found in tt-metal's tree and 5 only in one of the other four trees. The lines found
+   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,365 lines
+   checked, 146 are found in tt-metal's tree and 5 only in one of the other four trees. The lines found
    are license headers, import lines, calls of public APIs and common idioms.
-2. **Tokens.** Each of the 34 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
+2. **Tokens.** Each of the 35 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
    shell file of the same trees as a set of distinct 10-token sequences (comments dropped, and docstrings for Python):
    at most 16.67 % of a file's distinct sequences occur in any one upstream file (the highest is `tensix_runner/__main__.py`, closest
    to `tt-metal/.github/bug_checker/run_bug_checker.py`; a file of 1 lines checked, so few sequences); 16 files reach 2.5 % or more. Among

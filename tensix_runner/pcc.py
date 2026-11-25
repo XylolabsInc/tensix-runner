@@ -86,12 +86,14 @@ def reference(export, tokens, layers, overrides=None):
 
 def greedy_reference(export, tokens, n, overrides=None):
     """transformers' greedy continuation (n tokens) in float32 on the CPU, and each step's logits
-    [vocab] before any final softcap (Gemma's tanh(x / cap) * cap is undone)."""
+    [vocab] before any final softcap (Gemma's tanh(x / cap) * cap is undone). An end-of-sequence
+    token does not end the generation early: exactly n tokens and n logits rows come back."""
     m = _hf_model(export, overrides)
     with torch.no_grad():
         out = m.generate(
             torch.tensor([tokens]),
             max_new_tokens=n,
+            min_new_tokens=n,
             do_sample=False,
             output_logits=True,
             return_dict_in_generate=True,
@@ -114,7 +116,13 @@ def compare_greedy(got, want, logits):
     """Step by step, the device's token against transformers' (the device decoding transformers'
     tokens, so one difference does not shift the rest). A difference counts as a tie when the two
     tokens' logits in transformers lie within one bfloat16 step of each other. Returns
-    (equal steps, ties [(step, device, transformers, gap)], other differences [same])."""
+    (equal steps, ties [(step, device, transformers, gap)], other differences [same]). The three
+    inputs must have the same length (ValueError)."""
+    if not len(got) == len(want) == len(logits):
+        raise ValueError(
+            f"{len(got)} device tokens, {len(want)} reference tokens and {len(logits)} logits "
+            "rows: they must have the same length"
+        )
     same, ties, wrong = 0, [], []
     for k, (g, w) in enumerate(zip(got, want)):
         if g == w:

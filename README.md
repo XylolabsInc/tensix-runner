@@ -101,6 +101,12 @@ template has it) and decode greedily, with the argmax on the device. `bench` tim
 and decode (`tg`) in llama-bench's terms on the device you run it on. `--trace` on any of them
 replays the decode step from a trace (a card only).
 
+`--max-new 0` prefills nothing and prints nothing; a negative `--max-new` is an error. `bench`
+checks its lengths before it times anything: each `--pp` and each `--depth` must not exceed the
+prompt tokens it has, and `--pp`, and `--depth` (at least 1) plus `--tg`, must fit `--max-seq`,
+else it stops with a message naming the value and the limit. Its rates count the tokens actually
+prefilled.
+
 ## Kernels (optional)
 
 ```
@@ -127,6 +133,12 @@ has the device decode transformers' greedy tokens and compares every step's toke
 counts as a tie when transformers' two logits lie within one bfloat16 step. `--drift` compares
 every layer's output within one whole-model prefill, where errors add up. `--window 32` sets
 Gemma 4's sliding window on both sides, so that a short prompt reaches the window's edge.
+`--greedy N` always compares exactly N steps: the reference does not stop at an end-of-sequence
+token, the device decodes the reference's tokens (an end-of-sequence token is an ordinary token
+there), and the sequence length covers the prompt plus N. `pcc` with none of `--layers`,
+`--greedy`, `--verify`, `--spec`, `--drift` and `--mtp` checks nothing and stops with a usage
+error before it opens a device; `--k` for `--spec` is an integer of at least 1, and at most 7 with
+`--kernels` (a round sends k + 1 rows, and the kernels' head takes 8 rows a call).
 transformers runs the export in float32 on the CPU, which needs about four times the export's bf16
 size in memory.
 

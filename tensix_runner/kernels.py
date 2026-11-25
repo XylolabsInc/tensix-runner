@@ -18,6 +18,8 @@ import os
 import sys
 from pathlib import Path
 
+HEAD_ROWS = 8  # the head's rows a call (rows * k <= 64 per core, with k = 8)
+
 _STATE = {"dr": None, "path": None}
 
 
@@ -77,7 +79,7 @@ class Head:
     device an exact rescore of each row's best 16 candidates (bf16 rows, float32 sums) and the
     pick, the lowest id on ties: the argmax of float32 logits. table: the head's rows already on
     the device in ttnn.embedding's layout (a tied embedding), else the head makes its own copy. Up
-    to 8 rows a call."""
+    to HEAD_ROWS (8) rows a call."""
 
     def __init__(self, device, w, table=None, chunks=16):
         import torch
@@ -94,7 +96,7 @@ class Head:
             w.to(torch.bfloat16),
             fmt="bf16",
             chunks=chunks,
-            k=8,  # rows * k <= 64 per core: 8 rows a call (k=4 stops ttsim, b2f72be)
+            k=8,  # rows * k <= 64 per core: HEAD_ROWS rows a call (k=4 stops ttsim, b2f72be)
             top=16,
             logits="float32",
             device_pick=True,
@@ -103,5 +105,7 @@ class Head:
         )
 
     def __call__(self, h, rows):
-        """The ids of h's first rows (h normed, [1, 1, >= rows, dim] bf16 TILE)."""
+        """The ids of h's first rows (h normed, [1, 1, >= rows, dim] bf16 TILE), up to HEAD_ROWS."""
+        if rows > HEAD_ROWS:
+            raise ValueError(f"{rows} rows: the head takes at most {HEAD_ROWS} rows a call")
         return [int(t) for t in self.head(h, rows)]

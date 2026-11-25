@@ -10,6 +10,8 @@ import json
 import time
 from pathlib import Path
 
+from .kernels import HEAD_ROWS
+
 
 def tokenizer(export):
     from tokenizers import Tokenizer
@@ -73,9 +75,30 @@ def stop_ids(export):
     return set(ids) if isinstance(ids, list) else {ids}
 
 
+def check_count(max_new):
+    """max_new, a count of new tokens: not negative (ValueError)."""
+    if max_new < 0:
+        raise ValueError(f"max_new is {max_new}: the number of new tokens cannot be negative")
+
+
+def check_k(k, kernels_head=False):
+    """k, the drafts a round: an integer of at least 1 (ValueError); with the kernels' head, at
+    most HEAD_ROWS - 1, as a round sends k + 1 rows to it."""
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError(f"k is {k!r}: the drafts a round must be an integer of at least 1")
+    if kernels_head and k + 1 > HEAD_ROWS:
+        raise ValueError(
+            f"k is {k}: a round sends {k + 1} rows, and the kernels head takes at most "
+            f"{HEAD_ROWS} rows a call, so the largest k is {HEAD_ROWS - 1}"
+        )
+
+
 def generate(model, tokens, max_new, stop=(), on_token=None):
-    """Greedy tokens after the prompt tokens, until a stop token or max_new. Returns (tokens,
-    prefill seconds, decode seconds)."""
+    """Greedy tokens after the prompt tokens, until a stop token or max_new. max_new 0 returns no
+    tokens and runs nothing. Returns (tokens, prefill seconds, decode seconds)."""
+    check_count(max_new)
+    if max_new == 0:
+        return [], 0.0, 0.0
     if len(tokens) + max_new > model.max_seq:
         raise ValueError(
             f"{len(tokens)} prompt + {max_new} new tokens exceed max_seq {model.max_seq}"
@@ -98,7 +121,13 @@ def speculate(model, mtp, tokens, max_new, k=2, stop=(), on_token=None):
     """Greedy tokens with k drafts a round from the model's MTP module (mtp.draft), each round
     verified as one decode step of k + 1 rows (model.verify) and the kept rows committed: the
     output equals generate()'s up to ties within bf16 rounding. Returns (tokens, prefill seconds,
-    decode seconds, the number of draft rows each round kept)."""
+    decode seconds, the number of draft rows each round kept). k must be an integer of at least 1,
+    and at most 7 where the model has the kernels' head (k + 1 rows a call, 8 at most); max_new 0
+    returns no tokens and runs nothing."""
+    check_k(k, getattr(model, "khead", None) is not None)
+    check_count(max_new)
+    if max_new == 0:
+        return [], 0.0, 0.0, []
     import ttnn
 
     if len(tokens) + max_new + k > model.max_seq:
