@@ -26,7 +26,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `.gitignore` | ours |  | 2 | 0 | ignore patterns |
 | `AGENTS.md` | ours |  | 45 | 0 | instructions for coding agents |
 | `CLAUDE.md` | ours |  | 0 | 0 | symbolic link to AGENTS.md |
-| `README.md` | ours |  | 86 | 0 | documentation |
+| `README.md` | ours |  | 84 | 0 | documentation |
 | `pyproject.toml` | ours |  | 20 | 0 | package metadata |
 | `scripts/download.sh` | ours |  | 5 | 1 |  |
 | `scripts/install.sh` | ours |  | 35 | 1 |  |
@@ -75,7 +75,7 @@ this repository pins, tt-metal v0.81.1.
    transformers v5.13.0 (5,909), the GPTQ reference implementation
    [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) (commit `2d65066`, 41),
    [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) (commit `9f7d370`, 172) and
-   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,362 lines
+   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,360 lines
    checked, 146 are found in tt-metal's tree and 5 only in one of the other four trees. The lines found
    are license headers, import lines, calls of public APIs and common idioms.
 2. **Tokens.** Each of the 35 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and

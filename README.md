@@ -7,14 +7,10 @@
 
 # tensix-runner
 
-**Run Xylolabs' BFP4 and BFP8 Hugging Face exports on Tenstorrent Tensix devices, through upstream ttnn**
-
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB)](pyproject.toml)
 [![ttnn](https://img.shields.io/badge/ttnn-0.81.1-5B2C83)](https://github.com/tenstorrent/tt-metal/releases/tag/v0.81.1)
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-models-FFD21E)](https://huggingface.co/Xylolabs)
-
-`tenstorrent` · `tensix` · `tt-metal` · `ttnn` · `wormhole` · `blackhole` · `llm-inference` · `block-floating-point`
 
 </div>
 
