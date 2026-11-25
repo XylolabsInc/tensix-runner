@@ -26,7 +26,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `.gitignore` | ours |  | 2 | 0 | ignore patterns |
 | `AGENTS.md` | ours |  | 45 | 0 | instructions for coding agents |
 | `CLAUDE.md` | ours |  | 0 | 0 | symbolic link to AGENTS.md |
-| `README.md` | ours |  | 84 | 0 | documentation |
+| `README.md` | ours |  | 86 | 0 | documentation |
 | `pyproject.toml` | ours |  | 20 | 0 | package metadata |
 | `scripts/download.sh` | ours |  | 5 | 1 |  |
 | `scripts/install.sh` | ours |  | 35 | 1 |  |
@@ -48,9 +48,10 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `tensix_runner/pcc.py` | ours |  | 160 | 6 | Layer and model checks against transformers on the same export (the `ref` extra) |
 | `tensix_runner/rope.py` | ours |  | 36 | 2 | Rotary position embedding in Hugging Face's layout (rotate_half: the first and second halves of each head pair up), for ttnn.experimental.rotary_embedding_hf |
 | `tensix_runner/weights.py` | ours |  | 17 | 2 | Weights packed for TT-NN exactly as the export stores them |
-| `tests/conftest.py` | ours |  | 36 | 5 | Shared fixtures |
+| `tests/conftest.py` | ours |  | 40 | 5 | Shared fixtures |
 | `tests/test_bfp.py` | ours |  | 21 | 2 | The torch grid check: bfp() on hand-computed blocks and on_grid() on rounded and raw weights |
 | `tests/test_bounds.py` | ours |  | 149 | 1 | Counts and lengths are checked before the runner runs: speculation's k, the greedy check's lengths and allocation, the benchmark's lengths, zero and negative generation counts, and a pcc command line that checks nothing |
+| `tests/test_conftest_env.py` | ours |  | 10 | 1 | The conftest rule that turns off the instruction the simulator does not support |
 | `tests/test_device.py` | ours |  | 18 | 2 |  |
 | `tests/test_export.py` | ours |  | 148 | 4 | Export loading on synthetic exports: formats, prefixes, the head's name and tie rules, refusals, and the host check |
 | `tests/test_export_device.py` | ours |  | 13 | 1 |  |
@@ -66,7 +67,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 
 ## How it was checked
 
-All counts are from a run on 2026-11-25 over the files of this tree (on `5b9c5c8` with this change), against the version
+All counts are from a run on 2026-11-25 over the files of this tree (on `40f9086` with this change), against the version
 this repository pins, tt-metal v0.81.1.
 
 1. **Line comparison.** Every line of 30 or more characters (whitespace-normalized), every line counted and duplicates
@@ -75,10 +76,10 @@ this repository pins, tt-metal v0.81.1.
    transformers v5.13.0 (5,909), the GPTQ reference implementation
    [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) (commit `2d65066`, 41),
    [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) (commit `9f7d370`, 172) and
-   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,360 lines
-   checked, 146 are found in tt-metal's tree and 5 only in one of the other four trees. The lines found
+   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,376 lines
+   checked, 147 are found in tt-metal's tree and 5 only in one of the other four trees. The lines found
    are license headers, import lines, calls of public APIs and common idioms.
-2. **Tokens.** Each of the 35 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
+2. **Tokens.** Each of the 36 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
    shell file of the same trees as a set of distinct 10-token sequences (comments dropped, and docstrings for Python):
    at most 16.67 % of a file's distinct sequences occur in any one upstream file (the highest is `tensix_runner/__main__.py`, closest
    to `tt-metal/.github/bug_checker/run_bug_checker.py`; a file of 1 lines checked); 16 files reach 2.5 % or more. Among

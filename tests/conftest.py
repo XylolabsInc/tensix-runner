@@ -11,6 +11,15 @@ import pytest
 import torch
 
 
+def apply_simulator_env(env):
+    """On the simulator, turn off the instruction it does not support; an existing value is kept."""
+    if env.get("TT_METAL_SIMULATOR"):
+        env.setdefault("TT_METAL_DISABLE_SFPLOADMACRO", "1")
+
+
+apply_simulator_env(os.environ)  # at import, before any test opens a device
+
+
 def _ttnn_or_skip():
     try:
         import ttnn

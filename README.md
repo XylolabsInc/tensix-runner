@@ -155,6 +155,9 @@ pytest                               # host tests; the device tests need ttnn an
 TENSIX_RUNNER_EXPORT=exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 pytest -m export
 ```
 
+On ttsim the suite sets `TT_METAL_DISABLE_SFPLOADMACRO=1` (unless already set), because the
+simulator does not support that instruction.
+
 ## License
 
 Apache 2.0 (`LICENSE`, `NOTICE`). Files adapted from other projects are listed in `ORIGINS.md`.
