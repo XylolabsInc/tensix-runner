@@ -139,7 +139,10 @@ tensix-runner check exports/Qwen3-4B-Tenstorrent-Tensix-BFP4 --device   # and th
 ```
 
 Each matrix is transposed to `[in, out]`, the layout TT-NN's matmul reads, packed at its format and
-unpacked again; the check passes when every value comes back bit for bit. `--layers 0,1` limits it.
+unpacked again; the check passes when every value comes back bit for bit. Every matrix includes the
+LM head, the tensor `lm_head_tensor` or the tie rules pick, at the format `quant4.json` gives it. A
+bf16 matrix, head or projection, is checked with `--host` only. `--layers 0,1` limits the layers;
+the head is always checked.
 
 ## Tests
 

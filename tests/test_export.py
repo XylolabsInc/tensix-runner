@@ -4,6 +4,7 @@
 and the host check."""
 
 import json
+from pathlib import Path
 
 import pytest
 import torch
@@ -80,7 +81,7 @@ def test_not_an_export(tmp_path):
 
 def test_host_check(tiny_export, capsys):
     assert main(["check", str(tiny_export), "--host"]) == 0
-    assert "4 of 4 matrices exact" in capsys.readouterr().out
+    assert "5 of 5 matrices exact" in capsys.readouterr().out  # the bf16 head counts with --host
     # a value moved off the grid is reported and fails the check
     ex = Export(tiny_export)
     name = ex.name(1, "mlp.down_proj")
@@ -199,3 +200,81 @@ def test_tie_word_embeddings_levels(tmp_path, tied, nested, ok):
     else:
         with pytest.raises(ExportError, match="set lm_head_tensor"):
             _ = ex.head_name
+
+
+def on_grid_weight(fmt, shape, seed):
+    from tensix_runner.bfp import bfp
+
+    w = torch.randn(shape, generator=torch.Generator().manual_seed(seed))
+    return bfp(w.T.contiguous(), {"bfp4": 3, "bfp8": 7}[fmt]).T.contiguous().bfloat16()
+
+
+def check_export(tmp_path, head_fmt="bfp4", head_on_grid=True, tied=False):
+    """Two layers on their grids and a head: lm_head.weight, or the embedding where tied."""
+    t = {
+        f"model.layers.{i}.mlp.up_proj.weight": on_grid_weight("bfp4", (32, 32), i) for i in (0, 1)
+    }
+    head = (
+        on_grid_weight(head_fmt, (64, 32), 7)
+        if head_fmt != "bf16"
+        else torch.randn(64, 32).bfloat16()
+    )
+    if not head_on_grid:
+        head = torch.randn(64, 32, generator=torch.Generator().manual_seed(8)).bfloat16()
+    t["model.embed_tokens.weight" if tied else "lm_head.weight"] = head
+    if not tied:
+        t["model.embed_tokens.weight"] = torch.randn(64, 32).bfloat16()
+    layers = {"0": {"mlp.up_proj": "bfp4"}, "1": {"mlp.up_proj": "bfp4"}}
+    cfg = {"model_type": "qwen3", "tie_word_embeddings": tied}
+    return str(write_export(tmp_path / "c", t, layers, cfg, lm_head=head_fmt))
+
+
+def test_check_flags_a_head_off_the_grid(tmp_path, capsys):
+    d = check_export(tmp_path, head_on_grid=False)
+    assert main(["check", d, "--host"]) == 1
+    out = capsys.readouterr().out
+    assert "MOVED head (bfp4)" in out and "MOVED layer" not in out
+    assert "2 of 3 matrices exact" in out
+
+
+@pytest.mark.parametrize("fmt", ["bfp4", "bfp8"])
+def test_check_counts_a_head_on_the_grid(tmp_path, capsys, fmt):
+    assert main(["check", check_export(tmp_path, head_fmt=fmt), "--host"]) == 0
+    assert "3 of 3 matrices exact" in capsys.readouterr().out  # two layers and the head
+
+
+def test_check_skips_a_bf16_head_without_host(tmp_path, capsys, monkeypatch):
+    from tensix_runner import bfp, weights
+
+    monkeypatch.setattr(weights, "check", lambda w, fmt, dev=None: bfp.on_grid(w, fmt))
+    d = check_export(tmp_path, head_fmt="bf16")
+    assert main(["check", d]) == 0
+    assert "2 of 2 matrices exact" in capsys.readouterr().out
+    assert main(["check", d, "--host"]) == 0
+    assert "3 of 3 matrices exact" in capsys.readouterr().out
+
+
+def test_check_with_layers_still_checks_the_head(tmp_path, capsys):
+    d = check_export(tmp_path, head_on_grid=False)
+    assert main(["check", d, "--host", "--layers", "1"]) == 1
+    out = capsys.readouterr().out
+    assert "MOVED head (bfp4)" in out and "1 of 2 matrices exact" in out
+    assert main(["check", check_export(tmp_path / "ok"), "--host", "--layers", "0"]) == 0
+    assert "2 of 2 matrices exact" in capsys.readouterr().out
+
+
+def test_check_reads_a_tied_head_as_the_embedding(tmp_path, capsys):
+    assert main(["check", check_export(tmp_path / "a", tied=True), "--host"]) == 0
+    assert "3 of 3 matrices exact" in capsys.readouterr().out
+    d = check_export(tmp_path / "b", tied=True, head_on_grid=False)
+    assert main(["check", d, "--host"]) == 1
+    assert "MOVED head (bfp4)" in capsys.readouterr().out
+
+
+def test_check_stops_at_a_missing_head(tmp_path):
+    d = check_export(tmp_path)
+    (Path(d) / "quant4.json").write_text(
+        json.dumps({"layers": {"0": {"mlp.up_proj": "bfp4"}}, "lm_head_tensor": "x.lm_head.weight"})
+    )
+    with pytest.raises(ExportError, match="lm_head_tensor"):
+        main(["check", d, "--host"])

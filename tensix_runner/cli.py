@@ -57,6 +57,7 @@ def cmd_check(a):
 
     ex = Export(a.export)
     layers = ints(a.layers) if a.layers else None
+    head = ex.head_name  # a head the manifest names but the checkpoint lacks stops here
     dev = None
     if a.host:
         from .bfp import on_grid
@@ -77,13 +78,17 @@ def cmd_check(a):
 
     t0, n, bad = time.monotonic(), 0, []
     try:
-        for layer, proj, fmt, name in ex.matrices(layers):
+        items = [
+            (f"layer {layer} {proj}", fmt, name) for layer, proj, fmt, name in ex.matrices(layers)
+        ]
+        items.append(("head", ex.head_format, head))  # every layer selection checks the head too
+        for label, fmt, name in items:
             if fmt == "bf16" and not a.host:
                 continue  # bf16 packs as it is stored
             n += 1
             if not ok(ex.get(name), fmt):
-                bad.append(f"layer {layer} {proj} ({fmt})")
-                print(f"MOVED layer {layer} {proj} ({fmt})", flush=True)
+                bad.append(f"{label} ({fmt})")
+                print(f"MOVED {label} ({fmt})", flush=True)
     finally:
         if dev is not None:
             import ttnn
