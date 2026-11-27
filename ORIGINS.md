@@ -26,15 +26,15 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `.gitignore` | ours |  | 2 | 0 | ignore patterns |
 | `AGENTS.md` | ours |  | 45 | 0 | instructions for coding agents |
 | `CLAUDE.md` | ours |  | 0 | 0 | symbolic link to AGENTS.md |
-| `README.md` | ours |  | 86 | 0 | documentation |
+| `README.md` | ours |  | 90 | 0 | documentation |
 | `pyproject.toml` | ours |  | 20 | 0 | package metadata |
-| `scripts/download.sh` | ours |  | 5 | 1 |  |
+| `scripts/download.sh` | ours |  | 6 | 1 |  |
 | `scripts/install.sh` | ours |  | 35 | 1 |  |
 | `scripts/ttsim.sh` | ours |  | 11 | 4 |  |
 | `tensix_runner/__init__.py` | ours |  | 3 | 1 | tensix-runner: Xylolabs' BFP4/BFP8 Hugging Face exports on Tenstorrent Tensix devices through ttnn |
 | `tensix_runner/__main__.py` | ours |  | 1 | 1 |  |
 | `tensix_runner/bfp.py` | adapted | Xylolabs' tensix-bfp-gptq, `tensix_bfp/bfp.py` at `d67a977`, Apache-2.0 | 24 | 1 | `bfp()` as is; `on_grid()` reduced to the formats the runner loads |
-| `tensix_runner/cli.py` | ours |  | 192 | 8 | tensix-runner's command line |
+| `tensix_runner/cli.py` | ours |  | 208 | 7 | tensix-runner's command line |
 | `tensix_runner/device.py` | ours |  | 25 | 3 |  |
 | `tensix_runner/export.py` | ours |  | 74 | 3 |  |
 | `tensix_runner/generate.py` | ours |  | 73 | 2 | Prompts, stop tokens and the greedy loop |
@@ -53,6 +53,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 | `tests/test_bounds.py` | ours |  | 149 | 1 | Counts and lengths are checked before the runner runs: speculation's k, the greedy check's lengths and allocation, the benchmark's lengths, zero and negative generation counts, and a pcc command line that checks nothing |
 | `tests/test_conftest_env.py` | ours |  | 10 | 1 | The conftest rule that turns off the instruction the simulator does not support |
 | `tests/test_device.py` | ours |  | 18 | 2 |  |
+| `tests/test_download.py` | ours |  | 59 | 3 | Download layout and CLI checks with Hugging Face calls stubbed |
 | `tests/test_export.py` | ours |  | 148 | 4 | Export loading on synthetic exports: formats, prefixes, the head's name and tie rules, refusals, and the host check |
 | `tests/test_export_device.py` | ours |  | 13 | 1 |  |
 | `tests/test_gemma4.py` | ours |  | 39 | 9 | Gemma 4 on the host: which layer's KV cache each layer reads, and the RoPE frequencies of both layer types (against transformers where it is installed) |
@@ -68,7 +69,9 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 ## How it was checked
 
 All counts are from a run on 2026-11-25 over the files of this tree (on `40f9086` with this change), against the version
-this repository pins, tt-metal v0.81.1.
+this repository pins, tt-metal v0.81.1. The four files the `download --variant` change touched (`README.md`,
+`scripts/download.sh`, `tensix_runner/cli.py`, `tests/test_download.py`) were counted again on 2026-11-27 against the
+same trees.
 
 1. **Line comparison.** Every line of 30 or more characters (whitespace-normalized), every line counted and duplicates
    included, of each file in the table was looked up in tt-metal v0.81.1 (its source checkout at tag `v0.81.1`,
@@ -76,10 +79,10 @@ this repository pins, tt-metal v0.81.1.
    transformers v5.13.0 (5,909), the GPTQ reference implementation
    [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) (commit `2d65066`, 41),
    [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) (commit `9f7d370`, 172) and
-   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,376 lines
-   checked, 147 are found in tt-metal's tree and 5 only in one of the other four trees. The lines found
+   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,456 lines
+   checked, 149 are found in tt-metal's tree and 6 only in one of the other four trees. The lines found
    are license headers, import lines, calls of public APIs and common idioms.
-2. **Tokens.** Each of the 36 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
+2. **Tokens.** Each of the 37 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
    shell file of the same trees as a set of distinct 10-token sequences (comments dropped, and docstrings for Python):
    at most 16.67 % of a file's distinct sequences occur in any one upstream file (the highest is `tensix_runner/__main__.py`, closest
    to `tt-metal/.github/bug_checker/run_bug_checker.py`; a file of 1 lines checked); 16 files reach 2.5 % or more. Among

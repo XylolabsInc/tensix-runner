@@ -68,7 +68,13 @@ ttsim runs slow dispatch only, so traced decoding does not run on it.
 ```
 tensix-runner download Qwen3-4B-Tenstorrent-Tensix-BFP4  # from Xylolabs/Qwen3-4B-Tenstorrent-Tensix-BFP4 into exports/
 tensix-runner download NAME --repo ORG/NAME --dir DIR
+tensix-runner download NAME --variant bfp4               # one folder of a repo with one export per format
 ```
+
+A repo can have an export at its root or one export per format in folders such as `bfp4/` and
+`bfp8/`. Use `--variant` when the repo has several export folders.
+Root exports land in `exports/<repo name>` (or `--dir`), and folder exports land in their folder
+under that directory.
 
 `quant4.json` in the export names each projection's format.
 

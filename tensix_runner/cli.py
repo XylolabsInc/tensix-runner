@@ -2,7 +2,8 @@
 # Copyright 2026 Xylolabs
 """tensix-runner's command line.
 
-tensix-runner download NAME [--repo ORG/NAME] [--dir DIR]   fetch an export from Hugging Face
+tensix-runner download NAME [--repo ORG/NAME] [--dir DIR] [--variant FOLDER]
+    fetch a Hugging Face export into DIR or DIR/FOLDER (DIR defaults to exports/<repo name>)
 tensix-runner info [--device-id N]                          what ttnn reports about the device
 tensix-runner check EXPORT [--host | --device] [--layers 0,1]
     every projection quant4.json lists packs at its format without moving a value: --host with
@@ -27,12 +28,44 @@ def ints(s):
     return {int(x) for x in s.split(",") if x != ""}
 
 
+def _download_layout(files, variant):
+    """Return the download patterns and folder, both None for a root export."""
+    root_export = "quant4.json" in files
+    if variant is None and root_export:
+        return None, None
+
+    paths = (path.partition("/") for path in files)
+    folders = sorted({folder for folder, _, name in paths if folder and name == "quant4.json"})
+    if variant is not None:
+        variant = variant.rstrip("/")
+    if not folders:
+        if root_export:
+            raise SystemExit(f"Unknown variant {variant!r}. This repo has one export at its root.")
+        raise SystemExit(
+            "No export found. Expected quant4.json at the root or in a top-level folder."
+        )
+
+    if variant is None:
+        if len(folders) > 1:
+            raise SystemExit(f"Choose an export folder with --variant ({', '.join(folders)}).")
+        variant = folders[0]
+    elif variant not in folders:
+        raise SystemExit(
+            f"Unknown variant {variant!r}. Available export folders are {', '.join(folders)}."
+        )
+    return [f"{variant}/*"], variant
+
+
 def cmd_download(a):
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
 
     repo = a.repo or f"{HF_NAMESPACE}/{a.name}"
     out = Path(a.dir or Path("exports") / repo.split("/")[-1])
-    path = snapshot_download(repo, local_dir=out)
+    patterns, folder = _download_layout(HfApi().list_repo_files(repo), a.variant)
+    if folder is None:
+        path = snapshot_download(repo, local_dir=out)
+    else:
+        path = Path(snapshot_download(repo, local_dir=out, allow_patterns=patterns)) / folder
     print(f"{repo} -> {path}")
     return 0
 
@@ -389,10 +422,15 @@ def _trace_args(p):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="tensix-runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("download", help="fetch an export from Hugging Face")
+    p = sub.add_parser(
+        "download",
+        help="fetch an export from Hugging Face",
+        description="Root exports land in DIR and folder exports land in DIR/FOLDER.",
+    )
     p.add_argument("name", help="the export's name, e.g. Qwen3-4B-Tenstorrent-Tensix-BFP4")
     p.add_argument("--repo", help=f"the full repo id (default {HF_NAMESPACE}/NAME)")
-    p.add_argument("--dir", help="where to put it (default exports/NAME)")
+    p.add_argument("--dir", help="base download directory (default exports/<repo name>)")
+    p.add_argument("--variant", metavar="FOLDER", help="the export folder to download")
     p.set_defaults(fn=cmd_download)
     p = sub.add_parser("info", help="what ttnn reports about the device")
     p.add_argument("--device-id", type=int, default=0)
