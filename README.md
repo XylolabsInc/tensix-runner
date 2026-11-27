@@ -19,8 +19,7 @@ formats `ttnn.bfloat4_b` (BFP4) and `ttnn.bfloat8_b` (BFP8) by
 [tensix-bfp-gptq](https://github.com/XylolabsInc/tensix-bfp-gptq), on a Tenstorrent Wormhole or
 Blackhole chip through the public ttnn API of [tt-metal](https://github.com/tenstorrent/tt-metal)
 v0.81.1. The embedding lookup, the LM head and its argmax, and the drafter of models with multi-token
-prediction run on the device; the host tokenizes and schedules. Not affiliated with or endorsed by
-Tenstorrent.
+prediction run on the device; the host tokenizes and schedules.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) says how this repository is developed, from Tenstorrent's open software stack only; [ORIGINS.md](ORIGINS.md) says where every file comes from and how that was checked.
 
