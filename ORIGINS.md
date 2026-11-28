@@ -25,48 +25,48 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 |---|---|---|---|---|---|
 | `.gitignore` | ours |  | 2 | 0 | ignore patterns |
 | `AGENTS.md` | ours |  | 45 | 0 | instructions for coding agents |
-| `CHANGELOG.md` | ours |  | 7 | 0 | release notes |
+| `CHANGELOG.md` | ours |  | 14 | 0 | release notes |
 | `CLAUDE.md` | ours |  | 0 | 0 | symbolic link to AGENTS.md |
-| `README.md` | ours |  | 90 | 0 | documentation |
+| `README.md` | ours |  | 115 | 0 | documentation |
 | `pyproject.toml` | ours |  | 20 | 0 | package metadata |
 | `scripts/download.sh` | ours |  | 6 | 1 |  |
-| `scripts/install.sh` | ours |  | 35 | 1 |  |
+| `scripts/install.sh` | ours |  | 37 | 1 |  |
 | `scripts/ttsim.sh` | ours |  | 11 | 4 |  |
 | `tensix_runner/__init__.py` | ours |  | 3 | 1 | tensix-runner: Xylolabs' BFP4/BFP8 Hugging Face exports on Tenstorrent Tensix devices through ttnn |
 | `tensix_runner/__main__.py` | ours |  | 1 | 1 |  |
 | `tensix_runner/bfp.py` | adapted | Xylolabs' tensix-bfp-gptq, `tensix_bfp/bfp.py` at `d67a977`, Apache-2.0 | 24 | 1 | `bfp()` as is; `on_grid()` reduced to the formats the runner loads |
-| `tensix_runner/cli.py` | ours |  | 239 | 3 | tensix-runner's command line |
+| `tensix_runner/cli.py` | ours |  | 248 | 3 | tensix-runner's command line |
 | `tensix_runner/device.py` | ours |  | 25 | 3 |  |
 | `tensix_runner/export.py` | ours |  | 74 | 3 |  |
-| `tensix_runner/generate.py` | ours |  | 82 | 2 | Prompts, stop tokens and the greedy loop |
-| `tensix_runner/kernels.py` | ours |  | 51 | 1 | The optional tensix-kernels path: the dense reader (a weight-streaming matmul launched through ttnn.generic_op) for the model's matrices |
+| `tensix_runner/generate.py` | ours |  | 83 | 2 | Prompts, stop tokens and the greedy loop |
+| `tensix_runner/kernels.py` | ours |  | 50 | 1 | The optional tensix-kernels path: the dense reader (a weight-streaming matmul launched through ttnn.generic_op) for the model's matrices |
 | `tensix_runner/kv.py` | ours |  | 55 | 7 | A layer's paged KV cache for one sequence |
 | `tensix_runner/models/__init__.py` | ours |  | 8 | 1 | The model families, by the checkpoint's model_type |
 | `tensix_runner/models/gemma4.py` | ours |  | 213 | 15 | Gemma 4's text models with per-layer inputs (gemma-4-E2B, gemma-4-E4B) on one chip |
 | `tensix_runner/models/qwen3.py` | ours |  | 191 | 18 | Qwen3 dense (Qwen3-4B, Qwen3-8B) on one chip |
 | `tensix_runner/models/qwen35.py` | ours |  | 337 | 11 | Qwen3.5 (Qwen3.5-4B, Qwen3.5-9B) on one chip: Gated DeltaNet layers and gated attention layers |
-| `tensix_runner/ops.py` | ours |  | 76 | 9 | Small building blocks on ttnn shared by the models: compute configs, matrices, norms and the MLP |
-| `tensix_runner/pcc.py` | ours |  | 160 | 6 | Layer and model checks against transformers on the same export (the `ref` extra) |
+| `tensix_runner/ops.py` | ours |  | 75 | 9 | Small building blocks on ttnn shared by the models: compute configs, matrices, norms and the MLP |
+| `tensix_runner/pcc.py` | ours |  | 165 | 6 | Layer and model checks against transformers on the same export (the `ref` extra) |
 | `tensix_runner/rope.py` | ours |  | 36 | 2 | Rotary position embedding in Hugging Face's layout (rotate_half: the first and second halves of each head pair up), for ttnn.experimental.rotary_embedding_hf |
 | `tensix_runner/weights.py` | ours |  | 17 | 2 | Weights packed for TT-NN exactly as the export stores them |
 | `tests/conftest.py` | ours |  | 40 | 5 | Shared fixtures |
 | `tests/test_bfp.py` | ours |  | 21 | 2 | The torch grid check: bfp() on hand-computed blocks and on_grid() on rounded and raw weights |
-| `tests/test_bounds.py` | ours |  | 149 | 1 | Counts and lengths are checked before the runner runs: speculation's k, the greedy check's lengths and allocation, the benchmark's lengths, zero and negative generation counts, and a pcc command line that checks nothing |
+| `tests/test_bounds.py` | ours |  | 223 | 1 | Counts and lengths are checked before the runner runs: speculation's k, the greedy check's lengths and allocation, the benchmark's lengths, zero and negative generation counts, and a pcc command line that checks nothing |
 | `tests/test_conftest_env.py` | ours |  | 10 | 1 | The conftest rule that turns off the instruction the simulator does not support |
 | `tests/test_device.py` | ours |  | 18 | 2 |  |
 | `tests/test_download.py` | ours |  | 59 | 3 | Download layout and CLI checks with Hugging Face calls stubbed |
 | `tests/test_export.py` | ours |  | 148 | 4 | Export loading on synthetic exports: formats, prefixes, the head's name and tie rules, refusals, and the host check |
 | `tests/test_export_device.py` | ours |  | 13 | 1 |  |
 | `tests/test_gemma4.py` | ours |  | 39 | 9 | Gemma 4 on the host: which layer's KV cache each layer reads, and the RoPE frequencies of both layer types (against transformers where it is installed) |
-| `tests/test_generate.py` | ours |  | 34 | 1 | The chat template, the stop tokens and the greedy loop's bookkeeping, on the host |
+| `tests/test_generate.py` | ours |  | 40 | 1 | The chat template, the stop tokens and the greedy loop's bookkeeping, on the host |
 | `tests/test_kernels.py` | ours |  | 33 | 2 |  |
 | `tests/test_kv.py` | ours |  | 57 | 10 |  |
 | `tests/test_ops.py` | ours |  | 10 | 2 | compute_config's matmul accumulation: bf16 on ttsim's Wormhole only, fp32 everywhere else (needs the ttnn package, no device) |
 | `tests/test_origins.py` | ours |  | 21 | 4 | every tracked file is listed in ORIGINS.md exactly once |
-| `tests/test_pcc.py` | ours |  | 11 | 1 | The greedy check's bookkeeping on the host: bfloat16's spacing and the tie rule |
+| `tests/test_pcc.py` | ours |  | 46 | 1 | The greedy check's bookkeeping on the host: bfloat16's spacing and the tie rule |
 | `tests/test_qwen3.py` | ours |  | 14 | 2 |  |
-| `tests/test_qwen35.py` | ours |  | 31 | 4 |  |
-| `tests/test_review_fixes.py` | ours |  | 120 | 6 | Regression tests for the 2026-11-28 review fixes, mostly on the host with stand-ins for the device; the decode sharding and compute-config tests use ttnn (and ttsim) |
+| `tests/test_qwen35.py` | ours |  | 42 | 4 |  |
+| `tests/test_review_fixes.py` | ours |  | 165 | 6 | Regression tests for the 2026-11-28 review fixes, mostly on the host with stand-ins for the device; the decode sharding and compute-config tests use ttnn (and ttsim) |
 
 ## How it was checked
 
@@ -77,6 +77,9 @@ same trees. The files the 0.1.2 fixes and release touched (`CHANGELOG.md`, `pypr
 `tensix_runner/__init__.py`, `tensix_runner/cli.py`, `tensix_runner/generate.py`, `tensix_runner/models/gemma4.py`,
 `tensix_runner/models/qwen3.py`, `tensix_runner/models/qwen35.py`, `tensix_runner/ops.py`, `tests/test_review_fixes.py`)
 were counted again on 2026-11-28 against the same trees.
+For the 0.1.3 fixes, the "Lines checked" column of every row was recounted on 2026-11-28 (`git ls-files`, lines of
+30 or more characters after whitespace normalization); the "Lines in tt-metal" column and the token comparison below
+were not rerun, so they still describe the 2026-11-25 to 2026-11-28 runs above.
 
 1. **Line comparison.** Every line of 30 or more characters (whitespace-normalized), every line counted and duplicates
    included, of each file in the table was looked up in tt-metal v0.81.1 (its source checkout at tag `v0.81.1`,
@@ -84,7 +87,7 @@ were counted again on 2026-11-28 against the same trees.
    transformers v5.13.0 (5,909), the GPTQ reference implementation
    [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) (commit `2d65066`, 41),
    [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) (commit `9f7d370`, 172) and
-   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,636 lines
+   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,854 lines
    checked, 152 are found in tt-metal's tree and 6 only in one of the other four trees. The lines found
    are license headers, import lines, calls of public APIs and common idioms.
 2. **Tokens.** Each of the 38 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
