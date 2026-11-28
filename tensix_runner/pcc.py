@@ -32,7 +32,7 @@ def prompt_tokens(export, n):
         "working set in about one and a half megabytes of local SRAM. Large models stream their "
         "weights from DRAM for every token, so decode speed is set by memory bandwidth."
     )
-    ids = generate.template_bos(export, tok) + tok.encode(text).ids
+    ids = generate.template_bos(export, tok) + tok.encode(text, add_special_tokens=False).ids
     assert len(ids) >= n, f"the text has {len(ids)} tokens, fewer than {n}"
     return ids[:n]
 

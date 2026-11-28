@@ -68,3 +68,24 @@ def test_greedy_reference_keeps_an_end_of_sequence_argmax():
         pcc._hf_model = orig
     assert want[0] == first and len(want) == len(logits) == 4
     assert all(t == int(row.argmax()) for t, row in zip(want, logits))
+
+
+def test_prompt_tokens_have_one_bos_with_a_bos_post_processor(tmp_path):
+    """A tokenizer whose post-processor adds BOS does not add a second one after template_bos."""
+    import json
+    import types
+
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+
+    words = ["<bos>", "[UNK]", "The", "Tensix", "core", "pairs", "five", "small"]
+    tok = Tokenizer(models.WordLevel({w: i for i, w in enumerate(words)}, unk_token="[UNK]"))
+    tok.pre_tokenizer = pre_tokenizers.Whitespace()
+    tok.post_processor = processors.TemplateProcessing(
+        single="<bos> $A", special_tokens=[("<bos>", 0)]
+    )
+    tok.save(str(tmp_path / "tokenizer.json"))
+    (tmp_path / "tokenizer_config.json").write_text(
+        json.dumps({"bos_token": "<bos>", "chat_template": "<bos>{{ messages[0].content }}"})
+    )
+    ids = pcc.prompt_tokens(types.SimpleNamespace(root=tmp_path), 4)
+    assert ids.count(0) == 1 and ids[0] == 0
