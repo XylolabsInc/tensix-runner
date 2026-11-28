@@ -437,3 +437,13 @@ def test_pcc_rejects_a_non_finite_bar(cli_env, bar):
     with pytest.raises(SystemExit, match="--bar"):
         run_cli("pcc", "exp", "--layers", "0", "--prefill", "32", f"--bar={bar}")
     assert cli_env.opened == []
+
+
+def test_speculate_one_new_token_needs_only_the_prompt_to_fit(ttnn_stub):
+    m = Stub(max_seq=4)
+    assert g.speculate(m, StubMtp(), [1, 2, 3, 4], 1, k=2)[0] == [5]
+    assert m.calls == [("prefill_hidden", 4)]
+    with pytest.raises(ValueError, match="max_seq"):
+        g.speculate(m, StubMtp(), [1, 2, 3, 4, 5], 1, k=2)
+    with pytest.raises(ValueError, match="max_seq"):
+        g.speculate(m, StubMtp(), [1, 2, 3, 4], 2, k=2)

@@ -140,7 +140,8 @@ def speculate(model, mtp, tokens, max_new, k=2, stop=(), on_token=None):
         raise ValueError("the prompt must contain at least one token")
     import ttnn
 
-    if len(tokens) + max_new + k > model.max_seq:
+    # one new token returns after the prefill: no draft rows are written
+    if len(tokens) + (0 if max_new == 1 else max_new + k) > model.max_seq:
         raise ValueError(
             f"{len(tokens)} prompt + {max_new} new tokens exceed max_seq {model.max_seq}"
         )
