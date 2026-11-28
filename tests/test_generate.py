@@ -76,3 +76,15 @@ def test_generate_stops():
     assert out == [1, 2, 3]
     with pytest.raises(ValueError, match="max_seq"):
         g.generate(Fake(), [7] * 60, max_new=10)
+
+
+def test_stop_ids_fall_back_to_model_config(tmp_path):
+    from types import SimpleNamespace
+
+    ex = SimpleNamespace(root=tmp_path, text_config={"eos_token_id": [3, 4]}, config={"eos_token_id": 5})
+    assert g.stop_ids(ex) == {3, 4}
+    (tmp_path / "generation_config.json").write_text('{"eos_token_id": null}')
+    ex.text_config = {}
+    assert g.stop_ids(ex) == {5}
+    (tmp_path / "generation_config.json").write_text('{"eos_token_id": 6}')
+    assert g.stop_ids(ex) == {6}

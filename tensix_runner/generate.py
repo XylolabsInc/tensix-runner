@@ -67,9 +67,13 @@ def template_bos(export, tok):
 
 
 def stop_ids(export):
-    """generation_config.json's eos_token_id (one id or a list)."""
+    """EOS ids from generation config, then the model config (one id or a list)."""
     f = Path(export.root) / "generation_config.json"
     ids = json.loads(f.read_text()).get("eos_token_id") if f.exists() else None
+    if ids is None:
+        ids = export.text_config.get("eos_token_id")
+    if ids is None:
+        ids = export.config.get("eos_token_id")
     if ids is None:
         return set()
     return set(ids) if isinstance(ids, list) else {ids}
