@@ -25,6 +25,7 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 |---|---|---|---|---|---|
 | `.gitignore` | ours |  | 2 | 0 | ignore patterns |
 | `AGENTS.md` | ours |  | 45 | 0 | instructions for coding agents |
+| `CHANGELOG.md` | ours |  | 7 | 0 | release notes |
 | `CLAUDE.md` | ours |  | 0 | 0 | symbolic link to AGENTS.md |
 | `README.md` | ours |  | 90 | 0 | documentation |
 | `pyproject.toml` | ours |  | 20 | 0 | package metadata |
@@ -72,9 +73,10 @@ counted, duplicates included; "Lines in tt-metal" counts those also found in the
 All counts are from a run on 2026-11-25 over the files of this tree (on `40f9086` with this change), against the version
 this repository pins, tt-metal v0.81.1. The four files the `download --variant` change touched (`README.md`,
 `scripts/download.sh`, `tensix_runner/cli.py`, `tests/test_download.py`) were counted again on 2026-11-27 against the
-same trees. The files the 0.1.2 fixes touched (`tensix_runner/cli.py`, `tensix_runner/generate.py`,
-`tensix_runner/models/gemma4.py`, `tensix_runner/models/qwen3.py`, `tensix_runner/models/qwen35.py`,
-`tensix_runner/ops.py`, `tests/test_review_fixes.py`) were counted again on 2026-11-28 against the same trees.
+same trees. The files the 0.1.2 fixes and release touched (`CHANGELOG.md`, `pyproject.toml`,
+`tensix_runner/__init__.py`, `tensix_runner/cli.py`, `tensix_runner/generate.py`, `tensix_runner/models/gemma4.py`,
+`tensix_runner/models/qwen3.py`, `tensix_runner/models/qwen35.py`, `tensix_runner/ops.py`, `tests/test_review_fixes.py`)
+were counted again on 2026-11-28 against the same trees.
 
 1. **Line comparison.** Every line of 30 or more characters (whitespace-normalized), every line counted and duplicates
    included, of each file in the table was looked up in tt-metal v0.81.1 (its source checkout at tag `v0.81.1`,
@@ -82,7 +84,7 @@ same trees. The files the 0.1.2 fixes touched (`tensix_runner/cli.py`, `tensix_r
    transformers v5.13.0 (5,909), the GPTQ reference implementation
    [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) (commit `2d65066`, 41),
    [AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) (commit `9f7d370`, 172) and
-   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,629 lines
+   [llama.cpp](https://github.com/ggml-org/llama.cpp) (commit `d3c3e24`, 4,152). Of 2,636 lines
    checked, 152 are found in tt-metal's tree and 6 only in one of the other four trees. The lines found
    are license headers, import lines, calls of public APIs and common idioms.
 2. **Tokens.** Each of the 38 `.py`, `.cpp`, `.h` and `.sh` files was compared with every Python, C, C++, CUDA and
