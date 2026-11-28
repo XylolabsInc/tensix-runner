@@ -471,7 +471,7 @@ def _kernel_args(p):
         "--kernels",
         metavar="PATH",
         default=os.environ.get("TENSIX_KERNELS"),
-        help="a tensix-kernels checkout: its dense reader runs the matrices (default: $TENSIX_KERNELS, else off)",
+        help="a tensix-kernels checkout: its dense reader runs the matrices (default: %(default)s; $TENSIX_KERNELS if set, else None)",
     )
 
 
@@ -484,9 +484,15 @@ def _trace_args(p):
     p.add_argument("--trace-mb", type=int, default=64, help="the device's trace region, MiB")
 
 
+class _DefaultsParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("formatter_class", argparse.ArgumentDefaultsHelpFormatter)
+        super().__init__(*args, **kwargs)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="tensix-runner", description=__doc__.split("\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd", required=True, parser_class=_DefaultsParser)
     p = sub.add_parser(
         "download",
         help="fetch an export from Hugging Face",
@@ -498,20 +504,20 @@ def main(argv=None):
     p.add_argument("--variant", metavar="FOLDER", help="the export folder to download")
     p.set_defaults(fn=cmd_download)
     p = sub.add_parser("info", help="what ttnn reports about the device")
-    p.add_argument("--device-id", type=int, default=0)
+    p.add_argument("--device-id", type=int, default=0, help="device index")
     p.set_defaults(fn=cmd_info)
     p = sub.add_parser("check", help="every matrix packs without moving a value")
     p.add_argument("export", help="the export's directory")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--host", action="store_true", help="torch alone, no ttnn")
     g.add_argument("--device", action="store_true", help="also write each matrix to DRAM and back")
-    p.add_argument("--device-id", type=int, default=0)
-    p.add_argument("--layers", help="comma-separated layer numbers (default: all)")
+    p.add_argument("--device-id", type=int, default=0, help="device index")
+    p.add_argument("--layers", help="comma-separated layer numbers; all when omitted")
     p.set_defaults(fn=cmd_check)
     p = sub.add_parser("pcc", help="layers and greedy tokens against transformers (the ref extra)")
     p.add_argument("export", help="the export's directory")
     p.add_argument("--layers", help="comma-separated layers to compare one by one")
-    p.add_argument("--prefill", type=int, default=32, help="prompt rows (a multiple of 32)")
+    p.add_argument("--prefill", type=int, default=32, help="prompt rows (positive; a multiple of 32 for layer and drift checks)")
     p.add_argument("--decode", type=int, default=2, help="decode steps after the prompt")
     p.add_argument(
         "--greedy",
@@ -522,7 +528,7 @@ def main(argv=None):
     p.add_argument(
         "--mtp",
         action="store_true",
-        help="Qwen3.5's MTP module on transformers' last-layer rows of the prompt (--prefill rows, up to 32)",
+        help="Qwen3.5's MTP module on transformers' last-layer rows of the prompt (--prefill rows, 2 to 32; up to 8 with --kernels)",
     )
     p.add_argument(
         "--drift",
@@ -540,7 +546,7 @@ def main(argv=None):
         "--verify",
         type=int,
         default=0,
-        help="a verify of this many teacher-forced rows against decode steps (with --layers: those only)",
+        help="verify 2 to 32 teacher-forced rows against decode steps (up to 8 with --kernels; --layers selects layers)",
     )
     p.add_argument(
         "--window",
@@ -549,7 +555,7 @@ def main(argv=None):
         help="a sliding window for this check, set on both sides (reaches the window's edge in a short prompt)",
     )
     p.add_argument("--bar", type=float, default=0.99, help="the PCC every output must reach")
-    p.add_argument("--device-id", type=int, default=0)
+    p.add_argument("--device-id", type=int, default=0, help="device index")
     _kernel_args(p)
     p.set_defaults(fn=cmd_pcc)
     for name, fn, what in (
@@ -560,16 +566,16 @@ def main(argv=None):
         p.add_argument("export", help="the export's directory")
         if name == "run":
             p.add_argument("prompt")
-            p.add_argument("--raw", action="store_true", help="the prompt as is, no chat template")
+            p.add_argument("--raw", action="store_true", help="do not render the prompt with the chat template; prepend its BOS token when used")
         else:
             p.add_argument("--system", help="a system message")
         p.add_argument(
             "--think", action="store_true", help="the template's thinking mode, where it has one"
         )
-        p.add_argument("--max-new", type=int, default=256)
-        p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length")
+        p.add_argument("--max-new", type=int, default=256, help="maximum new tokens")
+        p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length, a multiple of 32")
         _trace_args(p)
-        p.add_argument("--device-id", type=int, default=0)
+        p.add_argument("--device-id", type=int, default=0, help="device index")
         _kernel_args(p)
         p.set_defaults(fn=fn)
     p = sub.add_parser("bench", help="pp and tg in llama-bench's form, timed on this device")
@@ -577,10 +583,10 @@ def main(argv=None):
     p.add_argument("--pp", default="512", help="prompt lengths, comma-separated")
     p.add_argument("--tg", type=int, default=128, help="decode steps per tg run")
     p.add_argument("--depth", default="0", help="tg depths, comma-separated")
-    p.add_argument("--repeat", type=int, default=3)
-    p.add_argument("--max-seq", type=int, default=4096, help="the KV cache's length")
+    p.add_argument("--repeat", type=int, default=3, help="runs per measurement")
+    p.add_argument("--max-seq", type=int, default=4096, help="the KV cache's length, a multiple of 32")
     _trace_args(p)
-    p.add_argument("--device-id", type=int, default=0)
+    p.add_argument("--device-id", type=int, default=0, help="device index")
     _kernel_args(p)
     p.set_defaults(fn=cmd_bench)
     a = ap.parse_args(argv)

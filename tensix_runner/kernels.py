@@ -9,8 +9,7 @@ matrix is a ttnn tensor and ttnn.linear runs it.
 
 With it, each matrix is stored once, DRAM width-sharded over the device's banks, and the dense
 reader runs it for decode and prefill (prefill in its row slices). The values are the export's: a
-matrix on its BFP grid is packed without moving a value. The head stays a ttnn matmul (its
-vocabulary does not fit the dense reader's per-core accumulator). On ttsim's Blackhole the dense
+matrix on its BFP grid is packed without moving a value. The LM head uses lm_head_topk's device head and picks the final token on the device. On ttsim's Blackhole the dense
 reader at HiFi4 gives ttnn.linear's output at HiFi4 bit for bit at 1 and 32 rows; on the Wormhole
 it accumulates in fp32 where ttnn.linear here accumulates in bf16, so it is the closer of the two."""
 

@@ -3,8 +3,8 @@
 # Copyright 2026 Xylolabs
 #
 # download.sh NAME [--repo ORG/NAME] [--dir DIR] [--variant FOLDER]
-# Fetch an export from Hugging Face into exports/NAME (or DIR),
-# e.g. download.sh Qwen3-4B-Tenstorrent-Tensix-BFP4. The repo defaults to Xylolabs/NAME.
+# Fetch into exports/<repo name> (or DIR); folder exports go into their variant folder beneath it.
+# The repo defaults to Xylolabs/NAME. PYTHON selects the interpreter (default: .venv/bin/python).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 py=${PYTHON:-.venv/bin/python}

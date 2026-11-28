@@ -24,7 +24,7 @@ points, not measurements of a particular device.
 1. A specification is written and reviewed for third-party content.
 2. A developer who works only from the specification and the public stack implements it in a clean checkout that
    holds this repository, the pinned upstream release and ttsim, and nothing else.
-3. The change is tested on ttsim with the checks named in AGENTS.md and RUNNING.md; correctness is checked against
+3. The change is tested on ttsim with the checks named in [AGENTS.md](AGENTS.md) and [README.md](README.md); correctness is checked against
    float64 or bf16 references with the tolerances the specification fixes.
 4. Every file's origin is recorded in ORIGINS.md (and NOTICE for files that follow tt-metal), with SPDX headers.
 5. Each commit is reviewed for third-party content, including a token comparison against code we may not use, before
@@ -41,7 +41,6 @@ upstream code. Releases after v0.1.0 follow the process above.
 | Date | Change | Specification (name, MD5) | Upstream | Checks |
 |---|---|---|---|---|
 | 2026-11-24 | docs(origins): record every file's origin | 01-origins-md.md, 0fb963254532e4ff23a9568d4dce868a | tt-metal/TT-NN v0.81.1, ttsim v1.16.0 | pytest on ttsim (41 passed, 9 skipped; the 3 test_window_decode cases end the simulator process, as they do on the commit before this change, and were left out), tests/test_origins.py (2 passed), ruff check and format |
-| 2026-11-25 | fix(export): find the LM head by the name quant4.json declares | 01-lm-head-tensor-name.md, 4945255f42a11f2eb6cd18adfd8ac88c | tt-metal/TT-NN v0.81.1, ttsim v1.16.0 | pytest on ttsim (58 passed, 9 skipped, including tests/test_origins.py; the 3 test_window_decode cases end the simulator process, as they do on main, and were left out), ruff check and format, shellcheck |
 | 2026-11-25 | fix(export): find the LM head by the name quant4.json declares | 01-lm-head-tensor-name.md, 4945255f42a11f2eb6cd18adfd8ac88c | tt-metal/TT-NN v0.81.1, ttsim v1.16.0 | pytest on ttsim (60 passed, 9 skipped, including tests/test_origins.py; the 3 test_window_decode cases end the simulator process, as they do on main, and were left out), ruff check and format, shellcheck |
 | 2026-11-25 | fix(cli): check the LM head too | 02-check-covers-head.md, 67291faf28361bf7eb41b766597f6945 | tt-metal/TT-NN v0.81.1, ttsim v1.16.0 | pytest on ttsim (67 passed, 9 skipped, including tests/test_origins.py; the 3 test_window_decode cases end the simulator process, as they do on main, and were left out), ruff check and format, shellcheck |
 | 2026-11-25 | fix(cli): check counts and lengths before the runner runs | 03-bounds-and-argument-checks.md, 7e8d82787089aed03008f01ccca74b66 | tt-metal/TT-NN v0.81.1, ttsim v1.16.0 | pytest on ttsim (97 passed, 9 skipped, including tests/test_origins.py and 30 new tests in tests/test_bounds.py; the 3 test_window_decode cases end the simulator process, as they do on main, and were left out), ruff check and format, shellcheck |
