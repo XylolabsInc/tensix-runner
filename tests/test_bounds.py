@@ -379,6 +379,7 @@ def test_load_failure_closes_export_even_if_device_close_fails(cli_env, monkeypa
 
 def test_run_closes_export_even_if_device_close_fails(cli_env, monkeypatch, ttnn_stub):
     _run_env(cli_env, monkeypatch)
+
     def fail_close(dev):
         raise RuntimeError("close")
 

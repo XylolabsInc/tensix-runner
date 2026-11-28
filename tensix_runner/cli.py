@@ -517,7 +517,12 @@ def main(argv=None):
     p = sub.add_parser("pcc", help="layers and greedy tokens against transformers (the ref extra)")
     p.add_argument("export", help="the export's directory")
     p.add_argument("--layers", help="comma-separated layers to compare one by one")
-    p.add_argument("--prefill", type=int, default=32, help="prompt rows (positive; a multiple of 32 for layer and drift checks)")
+    p.add_argument(
+        "--prefill",
+        type=int,
+        default=32,
+        help="prompt rows (positive; a multiple of 32 for layer and drift checks)",
+    )
     p.add_argument("--decode", type=int, default=2, help="decode steps after the prompt")
     p.add_argument(
         "--greedy",
@@ -566,14 +571,20 @@ def main(argv=None):
         p.add_argument("export", help="the export's directory")
         if name == "run":
             p.add_argument("prompt")
-            p.add_argument("--raw", action="store_true", help="do not render the prompt with the chat template; prepend its BOS token when used")
+            p.add_argument(
+                "--raw",
+                action="store_true",
+                help="do not render the prompt with the chat template; prepend its BOS token when used",
+            )
         else:
             p.add_argument("--system", help="a system message")
         p.add_argument(
             "--think", action="store_true", help="the template's thinking mode, where it has one"
         )
         p.add_argument("--max-new", type=int, default=256, help="maximum new tokens")
-        p.add_argument("--max-seq", type=int, default=2048, help="the KV cache's length, a multiple of 32")
+        p.add_argument(
+            "--max-seq", type=int, default=2048, help="the KV cache's length, a multiple of 32"
+        )
         _trace_args(p)
         p.add_argument("--device-id", type=int, default=0, help="device index")
         _kernel_args(p)
@@ -584,7 +595,9 @@ def main(argv=None):
     p.add_argument("--tg", type=int, default=128, help="decode steps per tg run")
     p.add_argument("--depth", default="0", help="tg depths, comma-separated")
     p.add_argument("--repeat", type=int, default=3, help="runs per measurement")
-    p.add_argument("--max-seq", type=int, default=4096, help="the KV cache's length, a multiple of 32")
+    p.add_argument(
+        "--max-seq", type=int, default=4096, help="the KV cache's length, a multiple of 32"
+    )
     _trace_args(p)
     p.add_argument("--device-id", type=int, default=0, help="device index")
     _kernel_args(p)
