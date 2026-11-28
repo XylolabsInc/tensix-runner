@@ -125,7 +125,7 @@ def test_negative_new_tokens_are_refused(ttnn_stub, fn):
 
 @pytest.fixture
 def cli_env(monkeypatch, ttnn_stub):
-    env = types.SimpleNamespace(loads=[], opened=[], model=Stub(), want=None, tokens=[])
+    env = types.SimpleNamespace(loads=[], opened=[], closed=[], model=Stub(), want=None, tokens=[])
 
     def open_device(device_id=0, **kw):
         env.opened.append(device_id)
@@ -140,7 +140,7 @@ def cli_env(monkeypatch, ttnn_stub):
             self.root, self.text_config = Path(path), {}
 
         def close(self):
-            pass
+            env.closed.append("export")
 
     for name, attrs in {
         "tensix_runner.device": {"open_device": open_device, "info": lambda d: "stub"},
@@ -361,3 +361,41 @@ def test_layer_selection_rejects_invalid_and_missing_layers():
     for layer in (-1, 1, 3):
         with pytest.raises(SystemExit, match="layer"):
             cli._check_layers(ex, {layer})
+
+
+def test_load_failure_closes_export_even_if_device_close_fails(cli_env, monkeypatch, ttnn_stub):
+    def fail_load(*args, **kwargs):
+        raise ValueError("load failed")
+
+    def fail_close(dev):
+        raise RuntimeError("device close failed")
+
+    monkeypatch.setattr(sys.modules["tensix_runner.models"], "load", fail_load)
+    monkeypatch.setattr(ttnn_stub, "close_device", fail_close)
+    with pytest.raises(RuntimeError, match="device close failed"):
+        run_cli("run", "exp", "hi")
+    assert cli_env.closed == ["export"]
+
+
+def test_run_closes_export_even_if_device_close_fails(cli_env, monkeypatch, ttnn_stub):
+    _run_env(cli_env, monkeypatch)
+    monkeypatch.setattr(ttnn_stub, "close_device", lambda dev: (_ for _ in ()).throw(RuntimeError("close")))
+    with pytest.raises(RuntimeError, match="close"):
+        run_cli("run", "exp", "hi", "--max-new", "0")
+    assert cli_env.closed == ["export"]
+
+
+def test_load_failure_and_success_close_resources(cli_env, monkeypatch, ttnn_stub):
+    devices = []
+    monkeypatch.setattr(ttnn_stub, "close_device", devices.append)
+    models = sys.modules["tensix_runner.models"]
+    load = models.load
+    def fail_load(*args, **kwargs):
+        raise ValueError("load failed")
+    monkeypatch.setattr(models, "load", fail_load)
+    with pytest.raises(ValueError, match="load failed"):
+        run_cli("run", "exp", "hi")
+    monkeypatch.setattr(models, "load", load)
+    _run_env(cli_env, monkeypatch)
+    run_cli("run", "exp", "hi", "--max-new", "0")
+    assert len(devices) == 2 and cli_env.closed == ["export", "export"]

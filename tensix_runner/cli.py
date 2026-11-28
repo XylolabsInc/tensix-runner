@@ -135,11 +135,13 @@ def cmd_check(a):
                 bad.append(f"{label} ({fmt})")
                 print(f"MOVED {label} ({fmt})", flush=True)
     finally:
-        if dev is not None:
-            import ttnn
+        try:
+            if dev is not None:
+                import ttnn
 
-            ttnn.close_device(dev)
-        ex.close()
+                ttnn.close_device(dev)
+        finally:
+            ex.close()
     how = "torch's grid check" if a.host else ("ttnn through DRAM" if a.device else "ttnn's packer")
     print(
         f"{ex.root.name}: {n - len(bad)} of {n} matrices exact ({how}) in {time.monotonic() - t0:.0f} s"
@@ -278,9 +280,11 @@ def cmd_pcc(a):
             if wrong:
                 bad.append("greedy")
     finally:
-        if dev is not None:
-            ttnn.close_device(dev)
-        ex.close()
+        try:
+            if dev is not None:
+                ttnn.close_device(dev)
+        finally:
+            ex.close()
     print(f"{len(bad)} below the bar {a.bar}" + (f": {bad}" if bad else ""))
     return 1 if bad else 0
 
@@ -317,11 +321,13 @@ def _open_model(a, ex=None):
         print(f"{ex.root.name} loaded in {time.monotonic() - t0:.0f} s", flush=True)
         return ex, dev, model
     except BaseException:
-        if dev is not None:
-            import ttnn
+        try:
+            if dev is not None:
+                import ttnn
 
-            ttnn.close_device(dev)
-        ex.close()
+                ttnn.close_device(dev)
+        finally:
+            ex.close()
         raise
 
 
@@ -351,8 +357,10 @@ def cmd_run(a):
         out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, Stream(tok, stop))
         print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
     finally:
-        ttnn.close_device(dev)
-        ex.close()
+        try:
+            ttnn.close_device(dev)
+        finally:
+            ex.close()
     return 0
 
 
@@ -381,8 +389,10 @@ def cmd_chat(a):
             print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
             msgs.append({"role": "assistant", "content": s.shown})
     finally:
-        ttnn.close_device(dev)
-        ex.close()
+        try:
+            ttnn.close_device(dev)
+        finally:
+            ex.close()
     return 0
 
 
@@ -447,8 +457,10 @@ def cmd_bench(a):
             print(f"| tg{a.tg} | {d} | {statistics.mean(rates):.2f} | {a.repeat} |", flush=True)
         print(("traced decode" if a.trace else "eager (no trace)") + "; one user")
     finally:
-        ttnn.close_device(dev)
-        ex.close()
+        try:
+            ttnn.close_device(dev)
+        finally:
+            ex.close()
     return 0
 
 
