@@ -225,7 +225,7 @@ def check_export(tmp_path, head_fmt="bfp4", head_on_grid=True, tied=False):
     if not tied:
         t["model.embed_tokens.weight"] = torch.randn(64, 32).bfloat16()
     layers = {"0": {"mlp.up_proj": "bfp4"}, "1": {"mlp.up_proj": "bfp4"}}
-    cfg = {"model_type": "qwen3", "tie_word_embeddings": tied}
+    cfg = {"model_type": "qwen3", "num_hidden_layers": 2, "tie_word_embeddings": tied}
     return str(write_export(tmp_path / "c", t, layers, cfg, lm_head=head_fmt))
 
 
