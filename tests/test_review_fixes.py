@@ -130,10 +130,39 @@ def test_check_count_requires_a_nonnegative_integer(bad):
 # the stream ------------------------------------------------------------------------------------
 
 
+class SpTok:
+    """A tokenizer like SentencePiece's: a leading space of the first piece is dropped, and a
+    byte-level piece alone decodes to the replacement character until its partner arrives."""
+
+    pieces: ClassVar[dict] = {1: " Hello", 2: " wor", 3: "ld", 4: b"\xe2\x82", 5: b"\xac!"}
+
+    def __init__(self):
+        self.lengths = []
+
+    def decode(self, ids):
+        self.lengths.append(len(ids))
+        raw = b"".join(
+            p if isinstance(p, bytes) else p.encode() for p in (self.pieces[i] for i in ids)
+        )
+        return raw.decode("utf-8", errors="replace").lstrip(" ") if ids else ""
 
 
+def test_stream_decodes_incrementally(capsys):
+    tok = SpTok()
+    s = cli.Stream(tok, stop={9})
+    for t in [1, 2, 3, 4, 5, 9]:
+        s(t)
+    assert capsys.readouterr().out == "Hello world€!"
+    assert s.shown == "Hello world€!"
+    assert max(tok.lengths) <= 3, tok.lengths  # not the whole history each token
 
 
+def test_stream_work_does_not_grow_with_the_output():
+    tok = SpTok()
+    s = cli.Stream(tok, stop=set())
+    for _ in range(200):
+        s(3)
+    assert max(tok.lengths) <= 3
 
 
 # pcc and bench ---------------------------------------------------------------------------------

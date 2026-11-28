@@ -315,15 +315,20 @@ class Stream:
 
     def __init__(self, tok, stop):
         self.tok, self.stop, self.ids, self.shown = tok, stop, [], ""
+        self.prefix = self.read = 0  # ids[prefix:read] are decoded again as the text's left context
 
     def __call__(self, t):
         if t in self.stop:
             return
         self.ids.append(t)
-        text = self.tok.decode(self.ids)
-        if not text.endswith("\ufffd"):  # wait for the rest of a multi-byte character
-            print(text[len(self.shown) :], end="", flush=True)
-            self.shown = text
+        # decode only the tokens since the last complete text, with the one before them as context
+        before = self.tok.decode(self.ids[self.prefix : self.read])
+        text = self.tok.decode(self.ids[self.prefix :])
+        if len(text) > len(before) and not text.endswith("\ufffd"):  # else wait for a character
+            new = text[len(before) :]
+            print(new, end="", flush=True)
+            self.shown += new
+            self.prefix, self.read = self.read, len(self.ids)
 
 
 def _open_model(a, ex=None):
