@@ -412,3 +412,28 @@ def test_empty_layer_selection_is_rejected_before_device(cli_env, command, extra
 def test_empty_layer_set_is_rejected():
     with pytest.raises(SystemExit, match="--layers requires"):
         cli._check_layers(None, set())
+
+
+# non-finite outputs
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("check", ["layers", "drift", "mtp"])
+def test_pcc_fails_on_a_non_finite_output(cli_env, monkeypatch, capsys, check, bad):
+    mtp = types.ModuleType("tensix_runner.models.qwen35")
+    mtp.Mtp = lambda model: object()
+    monkeypatch.setitem(sys.modules, "tensix_runner.models.qwen35", mtp)
+    monkeypatch.setattr(cli, "_check_layers", lambda ex, layers: None)
+    monkeypatch.setattr(pcc, "check_layers", lambda *a, **kw: {(0, "prefill"): (bad, 0.0)})
+    monkeypatch.setattr(pcc, "check_drift", lambda *a, **kw: {0: (bad, 0.0)})
+    monkeypatch.setattr(pcc, "check_mtp", lambda *a, **kw: (bad, 0.0, 1, [], []))
+    flag = {"layers": ["--layers", "0"], "drift": ["--drift"], "mtp": ["--mtp"]}[check]
+    assert run_cli("pcc", "exp", "--decode", "0", "--prefill", "32", *flag) == 1
+    assert "1 below the bar" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("bar", ["nan", "inf", "-inf"])
+def test_pcc_rejects_a_non_finite_bar(cli_env, bar):
+    with pytest.raises(SystemExit, match="--bar"):
+        run_cli("pcc", "exp", "--layers", "0", "--prefill", "32", f"--bar={bar}")
+    assert cli_env.opened == []

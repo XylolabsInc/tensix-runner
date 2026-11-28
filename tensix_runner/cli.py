@@ -16,6 +16,7 @@ tensix-runner bench EXPORT [--pp 512] [--tg 128] [--depth 0]        llama-bench'
 """
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -167,6 +168,8 @@ def _check_pcc_args(a):
         raise SystemExit("--mtp requires --prefill between 2 and the supported row limit")
     if a.greedy < 0:
         raise SystemExit(f"--greedy is {a.greedy}: it must be 0 or more")
+    if not math.isfinite(a.bar):
+        raise SystemExit(f"--bar is {a.bar}: it must be a finite number")
     # one primary check a run (--greedy runs after it): --layers only selects for --spec and --verify
     primary = [
         name
@@ -243,7 +246,7 @@ def cmd_pcc(a):
             res = pcc.check_mtp(
                 model, Mtp(model), tokens, a.prefill, lambda s: print(s, flush=True)
             )
-            if res[0] < a.bar or res[4]:
+            if not math.isfinite(res[0]) or res[0] < a.bar or res[4]:
                 bad.append("mtp")
         elif a.spec:
             from . import generate as g
@@ -273,12 +276,12 @@ def cmd_pcc(a):
             res = pcc.check_drift(
                 model, tokens, a.prefill, lambda s: print(s, flush=True), overrides
             )
-            bad += [k for k, (r, _) in res.items() if r < a.bar]
+            bad += [k for k, (r, _) in res.items() if not math.isfinite(r) or r < a.bar]
         elif layers:
             res = pcc.check_layers(
                 model, tokens, a.prefill, layers, lambda s: print(s, flush=True), overrides
             )
-            bad += [k for k, (r, _) in res.items() if r < a.bar]
+            bad += [k for k, (r, _) in res.items() if not math.isfinite(r) or r < a.bar]
         if a.greedy:
             # transformers first: the device decodes its tokens (teacher forcing), so a tie
             # within bf16 rounding at one step leaves the later steps comparable
