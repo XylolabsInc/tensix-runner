@@ -347,9 +347,7 @@ class Gemma4(Qwen3):
         if users in self._mcs:
             return self._mcs[users]
         c = self.cfg
-        grid = ttnn.CoreRangeSet(
-            {ttnn.CoreRange(ttnn.CoreCoord(0, 0), ttnn.CoreCoord(users - 1, 0))}
-        )
+        grid = ops.user_grid(self.device, users)
 
         def shard(rows, hd):
             return ttnn.create_sharded_memory_config(

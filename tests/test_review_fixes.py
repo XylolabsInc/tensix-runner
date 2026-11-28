@@ -154,7 +154,40 @@ def _ttnn():
     return pytest.importorskip("ttnn")
 
 
+def test_decode_sharding_follows_the_device_grid(device):
+    import ttnn
+
+    from tensix_runner.models.qwen3 import Qwen3
+
+    grid = device.compute_with_storage_grid_size()
+    users = min(32, grid.x * grid.y)
+    me = SimpleNamespace(_mcs={}, device=device, cfg=SimpleNamespace(head_dim=128, heads=32))
+    configs = Qwen3.decode_configs(me, users)  # 32 users reach past a grid of fewer columns
+    assert configs["users"] == users
+    import torch
+
+    t = ttnn.from_torch(
+        torch.zeros(1, 1, users * 32, 128),
+        dtype=ttnn.bfloat16,
+        layout=ttnn.TILE_LAYOUT,
+        device=device,
+        memory_config=ttnn.DRAM_MEMORY_CONFIG,
+    )
+    sharded = ttnn.to_memory_config(t, configs["heads"])  # fails on cores outside the grid
+    assert sharded.is_sharded()
 
 
+def test_user_grid_is_row_major_over_the_device(device):
+    from tensix_runner import ops
+
+    grid = device.compute_with_storage_grid_size()
+    for users in (1, grid.x - 1, grid.x, grid.x + 3, grid.x * grid.y):
+        assert ops.user_grid(device, users).num_cores() == users, users
+    ranges = ops.user_grid(device, grid.x + 3).ranges()
+    ends = sorted((r.start.x, r.start.y, r.end.x, r.end.y) for r in ranges)
+    assert ends == [(0, 0, grid.x - 1, 0), (0, 1, 2, 1)], ends  # a whole row, then 3 cores
+    for users in (0, grid.x * grid.y + 1):
+        with pytest.raises(ValueError, match="do not fit"):
+            ops.user_grid(device, users)
 
 
