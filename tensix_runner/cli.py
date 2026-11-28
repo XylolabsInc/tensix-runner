@@ -369,11 +369,17 @@ def cmd_bench(a):
     from . import generate as g
     from .export import Export
 
+    pps, depths = sorted(ints(a.pp)), sorted(ints(a.depth))
+    for option, values, minimum in (("pp", pps, 1), ("depth", depths, 0), ("tg", [a.tg], 1), ("repeat", [a.repeat], 1)):
+        if not values:
+            raise SystemExit(f"--{option} requires at least one value")
+        for value in values:
+            if value < minimum:
+                raise SystemExit(f"--{option} {value}: must be at least {minimum}")
     ex = Export(a.export)
     tok = g.tokenizer(ex)
     text = " ".join(["The quick brown fox jumps over the lazy dog."] * 400)
     ids = tok.encode(text, add_special_tokens=False).ids
-    pps, depths = sorted(ints(a.pp)), sorted(ints(a.depth))
     for n in pps:  # every length is checked before the device opens, so no partial table prints
         if n > len(ids):
             raise SystemExit(f"--pp {n}: only {len(ids)} prompt tokens are available")

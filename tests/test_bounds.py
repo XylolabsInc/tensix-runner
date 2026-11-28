@@ -327,3 +327,10 @@ def test_generate_allows_exact_cache_capacity():
     assert len(g.generate(m, [1, 2, 3], 2)[0]) == 2
     with pytest.raises(ValueError, match="max_seq"):
         g.generate(m, [1, 2, 3], 3)
+
+
+@pytest.mark.parametrize("option,value", [("--pp", "0"), ("--depth", "-1"), ("--tg", "0"), ("--repeat", "0")])
+def test_bench_rejects_invalid_counts(bench_env, option, value):
+    with pytest.raises(SystemExit, match=option):
+        run_cli("bench", "exp", option, value)
+    assert bench_env.opened == []
