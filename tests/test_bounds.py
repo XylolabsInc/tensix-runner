@@ -316,3 +316,11 @@ def test_empty_prompt_is_refused(fn):
     with pytest.raises(ValueError, match="prompt"):
         g.generate(m, [], 1) if fn == "generate" else g.speculate(m, StubMtp(), [], 1)
     assert m.calls == []
+
+
+def test_generate_allows_exact_cache_capacity():
+    m = Stub(max_seq=4)
+    assert len(g.generate(m, [1, 2, 3, 4], 1)[0]) == 1
+    assert len(g.generate(m, [1, 2, 3], 2)[0]) == 2
+    with pytest.raises(ValueError, match="max_seq"):
+        g.generate(m, [1, 2, 3], 3)

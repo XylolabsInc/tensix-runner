@@ -105,7 +105,7 @@ def generate(model, tokens, max_new, stop=(), on_token=None):
         return [], 0.0, 0.0
     if not tokens:
         raise ValueError("the prompt must contain at least one token")
-    if len(tokens) + max_new > model.max_seq:
+    if len(tokens) + max_new - 1 > model.max_seq:
         raise ValueError(
             f"{len(tokens)} prompt + {max_new} new tokens exceed max_seq {model.max_seq}"
         )
