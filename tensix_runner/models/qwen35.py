@@ -531,6 +531,9 @@ class Qwen35:
     """Qwen3.5 on one chip; the same interface as Qwen3 (prefill, decode, pcc's layer access)."""
 
     def __init__(self, export, device, max_seq=1024, layers=None, head=True, trace=False):
+        if trace:
+            raise NotImplementedError("Qwen3.5 traced decode cannot preserve recurrent state yet")
+
         import ttnn
 
         from .qwen3 import Qwen3
