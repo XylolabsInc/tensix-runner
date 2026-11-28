@@ -134,7 +134,14 @@ class SpTok:
     """A tokenizer like SentencePiece's: a leading space of the first piece is dropped, and a
     byte-level piece alone decodes to the replacement character until its partner arrives."""
 
-    pieces: ClassVar[dict] = {1: " Hello", 2: " wor", 3: "ld", 4: b"\xe2\x82", 5: b"\xac!"}
+    pieces: ClassVar[dict] = {
+        1: " Hello",
+        2: " wor",
+        3: "ld",
+        4: b"\xe2\x82",
+        5: b"\xac!",
+        6: "\ufffd",
+    }
 
     def __init__(self):
         self.lengths = []
@@ -155,6 +162,77 @@ def test_stream_decodes_incrementally(capsys):
     assert capsys.readouterr().out == "Hello world€!"
     assert s.shown == "Hello world€!"
     assert max(tok.lengths) <= 3, tok.lengths  # not the whole history each token
+
+
+@pytest.mark.parametrize("last, tail", [(4, "\ufffd"), (6, "\ufffd")])
+def test_stream_finish_prints_a_held_back_tail(capsys, last, tail):
+    """An incomplete sequence or a literal replacement character at the end of the output is
+    shown, not lost."""
+    s = cli.Stream(SpTok(), stop=set())
+    for t in [1, last]:
+        s(t)
+    assert s.shown == "Hello"
+    s.finish()
+    assert s.shown == "Hello" + tail
+    assert capsys.readouterr().out == "Hello" + tail
+    s.finish()  # nothing left to print
+    assert s.shown == "Hello" + tail
+
+
+def test_stream_finish_after_a_complete_text_prints_nothing(capsys):
+    s = cli.Stream(SpTok(), stop=set())
+    for t in [1, 2]:
+        s(t)
+    s.finish()
+    assert capsys.readouterr().out == "Hello wor" and s.shown == "Hello wor"
+
+
+class _RunTok(SpTok):
+    def encode(self, text, add_special_tokens=True):
+        return SimpleNamespace(ids=[1, 4])
+
+
+def _fake_generate(model, ids, max_new, stop=(), on_token=None):
+    for t in (1, 4):  # ends on an incomplete sequence
+        on_token(t)
+    return [1, 4], 0.0, 0.0
+
+
+def _patch_run(monkeypatch, fake_ttnn):
+    monkeypatch.setattr(cli, "_open_model", lambda a: (MagicMock(), object(), object()))
+    monkeypatch.setattr(g, "tokenizer", lambda ex: _RunTok())
+    monkeypatch.setattr(g, "stop_ids", lambda ex: set())
+    monkeypatch.setattr(g, "chat_prompt", lambda ex, msgs, thinking=False: str(len(msgs)))
+    monkeypatch.setattr(g, "generate", _fake_generate)
+
+
+def test_run_prints_a_held_back_tail(fake_ttnn, monkeypatch, capsys):
+    _patch_run(monkeypatch, fake_ttnn)
+    a = SimpleNamespace(prompt="hi", raw=False, think=False, max_new=2, trace=False)
+    assert cli.cmd_run(a) == 0
+    assert capsys.readouterr().out.startswith("Hello\ufffd\n")
+
+
+def test_chat_keeps_a_held_back_tail_in_the_history(fake_ttnn, monkeypatch, capsys):
+    _patch_run(monkeypatch, fake_ttnn)
+    seen = []
+    monkeypatch.setattr(
+        g,
+        "chat_prompt",
+        lambda ex, msgs, thinking=False: seen.append([dict(m) for m in msgs]) or "x",
+    )
+    lines = iter(["a", "b"])
+
+    def fake_input(prompt):
+        try:
+            return next(lines)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    a = SimpleNamespace(system=None, think=False, max_new=2, trace=False)
+    assert cli.cmd_chat(a) == 0
+    assert seen[1][1] == {"role": "assistant", "content": "Hello\ufffd"}
 
 
 def test_stream_work_does_not_grow_with_the_output():

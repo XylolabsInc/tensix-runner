@@ -333,6 +333,18 @@ class Stream:
             self.shown += new
             self.prefix, self.read = self.read, len(self.ids)
 
+    def finish(self):
+        """Print what the held-back tail decodes to: a replacement character, from a literal one or
+        an incomplete sequence at the end, is part of the output, not a wait for more bytes."""
+        if self.read == len(self.ids):
+            return
+        before = self.tok.decode(self.ids[self.prefix : self.read])
+        text = self.tok.decode(self.ids[self.prefix :])
+        new = text[len(before) :]
+        print(new, end="", flush=True)
+        self.shown += new
+        self.prefix, self.read = self.read, len(self.ids)
+
 
 def _open_model(a, ex=None):
     from .device import info, open_device
@@ -383,7 +395,9 @@ def cmd_run(a):
         ids = tok.encode(text, add_special_tokens=False).ids
         if a.raw:  # starts as the template would (BOS for Gemma)
             ids = g.template_bos(ex, tok) + ids
-        out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, Stream(tok, stop))
+        stream = Stream(tok, stop)
+        out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, stream)
+        stream.finish()
         print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
     finally:
         try:
@@ -415,6 +429,7 @@ def cmd_chat(a):
             ).ids
             s = Stream(tok, stop)
             out, t_pf, t_dec = g.generate(model, ids, a.max_new, stop, s)
+            s.finish()
             print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
             msgs.append({"role": "assistant", "content": s.shown})
     finally:
