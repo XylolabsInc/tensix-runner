@@ -32,6 +32,8 @@ def ints(s):
 def _check_layers(ex, layers):
     if layers is None:
         return
+    if not layers:
+        raise SystemExit("--layers requires at least one layer number")
     count = ex.text_config["num_hidden_layers"]
     for layer in sorted(layers):
         if not 0 <= layer < count:

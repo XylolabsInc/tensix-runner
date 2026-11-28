@@ -399,3 +399,15 @@ def test_load_failure_and_success_close_resources(cli_env, monkeypatch, ttnn_stu
     _run_env(cli_env, monkeypatch)
     run_cli("run", "exp", "hi", "--max-new", "0")
     assert len(devices) == 2 and cli_env.closed == ["export", "export"]
+
+
+@pytest.mark.parametrize("command,extra", [("check", []), ("pcc", ["--greedy", "1"])])
+def test_empty_layer_selection_is_rejected_before_device(cli_env, command, extra):
+    with pytest.raises(SystemExit, match="--layers requires"):
+        run_cli(command, "exp", "--layers", ",", *extra)
+    assert cli_env.opened == []
+
+
+def test_empty_layer_set_is_rejected():
+    with pytest.raises(SystemExit, match="--layers requires"):
+        cli._check_layers(None, set())
