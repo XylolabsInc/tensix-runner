@@ -37,26 +37,28 @@ fi
 "${pip[@]}" torch --index-url https://download.pytorch.org/whl/cpu
 "${pip[@]}" -e ".[ttnn,ref,test]"
 rt=$("$venv/bin/python" -c 'import os, ttnn; print(os.path.join(os.path.dirname(ttnn.__file__), "runtime"))')
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 if [ ! -d "$rt/sfpi" ]; then
 	# the wheel names its SFPI release and the archive's sha256 (tt_metal/sfpi-version, NAME='VALUE' lines), read without running it
 	sv=$(dirname "$rt")/tt_metal/sfpi-version
 	sfpi_version=$(sed -n "s/^sfpi_version='\\([^']*\\)'\$/\\1/p" "$sv")
 	sfpi_x86_64_debian_txz_hash=$(sed -n "s/^sfpi_x86_64_debian_txz_hash='\\([0-9a-f]*\\)'\$/\\1/p" "$sv")
 	[ "$sfpi_version" = "$SFPI_VERSION" ] || { echo "the ttnn wheel names SFPI ${sfpi_version:-?}, not $SFPI_VERSION" >&2; exit 1; }
-	tmp=$(mktemp -d)
 	curl -fsSL -o "$tmp/sfpi.txz" \
 		"https://github.com/tenstorrent/sfpi/releases/download/$SFPI_VERSION/sfpi_${SFPI_VERSION}_x86_64_debian.txz"
 	echo "${sfpi_x86_64_debian_txz_hash:?the wheel names no SFPI hash}  $tmp/sfpi.txz" | sha256sum -c --quiet || exit 1
 	tar -xJf "$tmp/sfpi.txz" -C "$rt"
-	rm -rf "$tmp"
 fi
 if [ -n "$sim" ]; then
 	soc=$([ "$sim" = bh ] && echo blackhole_140_arch.yaml || echo wormhole_b0_80_arch.yaml)
 	mkdir -p "ttsim/$sim"
-	curl -fsSL -o "ttsim/$sim/libttsim_$sim.so" \
+	curl -fsSL -o "$tmp/libttsim_$sim.so" \
 		"https://github.com/tenstorrent/ttsim/releases/download/$TTSIM_VERSION/libttsim_$sim.so"
 	# ttsim reads the chip's layout from soc_descriptor.yaml beside the library (tt-metal before v0.83)
-	curl -fsSL -o "ttsim/$sim/soc_descriptor.yaml" \
+	curl -fsSL -o "$tmp/soc_descriptor.yaml" \
 		"https://raw.githubusercontent.com/tenstorrent/tt-metal/$TT_METAL_VERSION/tt_metal/soc_descriptors/$soc"
+	mv "$tmp/libttsim_$sim.so" "ttsim/$sim/libttsim_$sim.so"
+	mv "$tmp/soc_descriptor.yaml" "ttsim/$sim/soc_descriptor.yaml"
 fi
 echo "done: source $venv/bin/activate${sim:+ && source scripts/ttsim.sh $sim}"
