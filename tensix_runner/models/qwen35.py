@@ -545,7 +545,6 @@ class Qwen35:
             )
         self.export, self.device, self.max_seq = export, device, max_seq
         self.trace, self._trace = trace, None
-        ops.set_arch(device)
         self.cfg = c = Config(export.text_config)
         assert max_seq % TILE == 0
         self.perm = head_perm(c.head_dim, c.rotary)

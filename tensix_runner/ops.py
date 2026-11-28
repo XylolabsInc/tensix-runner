@@ -14,24 +14,21 @@ TILE = 32
 # ttsim's Wormhole stops on a matmul that reloads fp32 partial sums ("UndefinedBehavior: tensix_unpacr"),
 # so matmuls on the simulated Wormhole accumulate in bf16. A Wormhole card keeps fp32 accumulation, as
 # tt-metal's own model configs do there; this runner has not been checked on a card yet.
-_ARCH = {"bf16_matmul": False}
-
-
-def set_arch(device):
-    """Record whether matmuls accumulate in bf16 (ttsim's Wormhole) for compute_config; called
-    once per model load."""
+def bf16_matmul(device):
+    """Whether matmuls on this device accumulate in bf16 (ttsim's Wormhole)."""
     import ttnn
 
     simulated = bool(os.environ.get("TT_METAL_SIMULATOR"))
-    _ARCH["bf16_matmul"] = simulated and device.arch() == ttnn.device.Arch.WORMHOLE_B0
+    return simulated and device.arch() == ttnn.device.Arch.WORMHOLE_B0
 
 
 _CONFIGS = {}
 
 
-def compute_config(fidelity="hifi4", matmul=False):
-    """A compute config without approximations: fp32 accumulation, except for matmuls on ttsim's
-    Wormhole (see _ARCH). Made once per fidelity and accumulation mode."""
+def compute_config(fidelity="hifi4", matmul=False, device=None):
+    """A compute config without approximations: fp32 accumulation, except for the matmuls of
+    `device` when it is ttsim's Wormhole (see bf16_matmul). Made once per fidelity and
+    accumulation mode."""
     import ttnn
 
     f = {
@@ -39,7 +36,7 @@ def compute_config(fidelity="hifi4", matmul=False):
         "hifi2": ttnn.MathFidelity.HiFi2,
         "hifi4": ttnn.MathFidelity.HiFi4,
     }[fidelity]
-    fp32 = not (matmul and _ARCH["bf16_matmul"])
+    fp32 = not (matmul and device is not None and bf16_matmul(device))
     key = (fidelity, fp32)
     if key not in _CONFIGS:
         _CONFIGS[key] = ttnn.WormholeComputeKernelConfig(
@@ -129,7 +126,7 @@ def linear(x, w, fidelity="hifi4", mc=None):
     return ttnn.linear(
         x,
         w,
-        compute_kernel_config=compute_config(fidelity, matmul=True),
+        compute_kernel_config=compute_config(fidelity, matmul=True, device=x.device()),
         memory_config=mc or ttnn.DRAM_MEMORY_CONFIG,
     )
 

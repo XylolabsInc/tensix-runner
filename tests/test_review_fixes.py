@@ -369,3 +369,33 @@ def test_compute_config_is_made_once():
 
     assert ops.compute_config("hifi4") is ops.compute_config("hifi4")
     assert ops.compute_config("hifi2") is not ops.compute_config("hifi4")
+
+
+# the matmul accumulation follows the device ---------------------------------------------------
+
+
+def test_matmul_accumulation_is_per_device(fake_ttnn, monkeypatch):
+    """A second device on another arch does not change the first one's matmul configs."""
+    from tensix_runner import ops
+
+    monkeypatch.setenv("TT_METAL_SIMULATOR", "/path/to/libttsim.so")
+    monkeypatch.setattr(ops, "_CONFIGS", {})
+    fake_ttnn.device.Arch.WORMHOLE_B0 = "wh"
+    fake_ttnn.WormholeComputeKernelConfig.side_effect = lambda **kw: SimpleNamespace(**kw)
+    wh, bh = SimpleNamespace(arch=lambda: "wh"), SimpleNamespace(arch=lambda: "bh")
+    assert ops.compute_config("hifi4", matmul=True, device=wh).fp32_dest_acc_en is False
+    assert ops.compute_config("hifi4", matmul=True, device=bh).fp32_dest_acc_en is True
+    assert ops.compute_config("hifi4", matmul=True, device=wh).fp32_dest_acc_en is False
+    assert ops.compute_config("hifi4").fp32_dest_acc_en is True
+
+
+def test_linear_takes_the_accumulation_from_its_input(fake_ttnn, monkeypatch):
+    from tensix_runner import ops
+
+    seen = []
+    monkeypatch.setattr(
+        ops, "compute_config", lambda f, matmul=False, device=None: seen.append(device)
+    )
+    dev = object()
+    ops.linear(SimpleNamespace(device=lambda: dev), object())
+    assert seen == [dev]

@@ -35,7 +35,6 @@ def test_dense_reader_matches_linear(device, monkeypatch, fmt, out_dim, rows):
 
     if not os.environ.get("TENSIX_KERNELS"):
         pytest.skip("TENSIX_KERNELS names no tensix-kernels checkout")
-    ops.set_arch(device)
     g = torch.Generator().manual_seed(rows)
     w = torch.randn(out_dim, 512, generator=g) * 0.05
     if fmt != "bf16":  # on the format's grid, as an export's matrix is

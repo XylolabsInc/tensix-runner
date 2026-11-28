@@ -32,7 +32,7 @@ def test_matmul_accumulation(monkeypatch, arch, simulated, fp32):
         monkeypatch.setenv("TT_METAL_SIMULATOR", "/path/to/libttsim.so")
     else:
         monkeypatch.delenv("TT_METAL_SIMULATOR", raising=False)
-    monkeypatch.setitem(ops._ARCH, "bf16_matmul", False)
-    ops.set_arch(Device(getattr(ttnn.device.Arch, arch)))
-    assert ops.compute_config("hifi4", matmul=True).fp32_dest_acc_en is fp32
-    assert ops.compute_config("hifi4").fp32_dest_acc_en is True
+    dev = Device(getattr(ttnn.device.Arch, arch))
+    assert ops.compute_config("hifi4", matmul=True, device=dev).fp32_dest_acc_en is fp32
+    assert ops.compute_config("hifi4", matmul=True).fp32_dest_acc_en is True
+    assert ops.compute_config("hifi4", device=dev).fp32_dest_acc_en is True

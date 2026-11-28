@@ -300,7 +300,6 @@ class Gemma4(Qwen3):
 
         self.export, self.device, self.max_seq = export, device, max_seq
         self.trace, self._trace = trace, None
-        ops.set_arch(device)
         self.cfg = c = Config(export.text_config)
         assert max_seq % TILE == 0
         want = range(c.layers) if layers is None else layers
