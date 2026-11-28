@@ -81,7 +81,9 @@ def test_generate_stops():
 def test_stop_ids_fall_back_to_model_config(tmp_path):
     from types import SimpleNamespace
 
-    ex = SimpleNamespace(root=tmp_path, text_config={"eos_token_id": [3, 4]}, config={"eos_token_id": 5})
+    ex = SimpleNamespace(
+        root=tmp_path, text_config={"eos_token_id": [3, 4]}, config={"eos_token_id": 5}
+    )
     assert g.stop_ids(ex) == {3, 4}
     (tmp_path / "generation_config.json").write_text('{"eos_token_id": null}')
     ex.text_config = {}

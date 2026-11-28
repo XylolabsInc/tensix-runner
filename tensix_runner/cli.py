@@ -150,7 +150,9 @@ def cmd_check(a):
 def _check_pcc_args(a):
     """Refuse a pcc command line that checks nothing or counts wrongly, before a device opens."""
     if a.prefill < 1 or ((a.layers or a.drift) and a.prefill % 32):
-        raise SystemExit(f"--prefill is {a.prefill}: it must be positive and a multiple of 32 for layer checks")
+        raise SystemExit(
+            f"--prefill is {a.prefill}: it must be positive and a multiple of 32 for layer checks"
+        )
     for option in ("decode", "spec", "verify", "window"):
         value = getattr(a, option)
         if value < 0:
@@ -395,7 +397,12 @@ def cmd_bench(a):
     from .export import Export
 
     pps, depths = sorted(ints(a.pp)), sorted(ints(a.depth))
-    for option, values, minimum in (("pp", pps, 1), ("depth", depths, 0), ("tg", [a.tg], 1), ("repeat", [a.repeat], 1)):
+    for option, values, minimum in (
+        ("pp", pps, 1),
+        ("depth", depths, 0),
+        ("tg", [a.tg], 1),
+        ("repeat", [a.repeat], 1),
+    ):
         if not values:
             raise SystemExit(f"--{option} requires at least one value")
         for value in values:
