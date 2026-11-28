@@ -337,8 +337,9 @@ class GatedDeltaNet:
                 ttnn.copy(ttnn.zeros_like(self.conv_state[j]), self.conv_state[j])
         x = self._conv_prefill(rm)
         ttnn.deallocate(rm)
-        q = ttnn.slice(x, [0, 0, 0, 0], [1, 1, T, self.kd])
-        k = ttnn.slice(x, [0, 0, 0, self.kd], [1, 1, T, 2 * self.kd])
+        # q and k to unit L2 norm per head, as decode and verify do
+        q = self._l2(ttnn.slice(x, [0, 0, 0, 0], [1, 1, T, self.kd]), c.k_heads, T)
+        k = self._l2(ttnn.slice(x, [0, 0, 0, self.kd], [1, 1, T, 2 * self.kd]), c.k_heads, T)
         v = ttnn.slice(x, [0, 0, 0, 2 * self.kd], [1, 1, T, self.conv_dim])
         ttnn.deallocate(x)
         o, st = ttnn.transformer.chunk_gated_delta_rule(
