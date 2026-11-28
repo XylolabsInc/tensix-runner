@@ -308,3 +308,11 @@ def test_run_with_negative_max_new_is_refused(cli_env, monkeypatch):
     with pytest.raises(ValueError, match="-1"):
         run_cli("run", "exp", "hi", "--max-new", "-1")
     assert cli_env.model.calls == []
+
+
+@pytest.mark.parametrize("fn", ["generate", "speculate"])
+def test_empty_prompt_is_refused(fn):
+    m = Stub()
+    with pytest.raises(ValueError, match="prompt"):
+        g.generate(m, [], 1) if fn == "generate" else g.speculate(m, StubMtp(), [], 1)
+    assert m.calls == []

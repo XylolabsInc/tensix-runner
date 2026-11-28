@@ -103,6 +103,8 @@ def generate(model, tokens, max_new, stop=(), on_token=None):
     check_count(max_new)
     if max_new == 0:
         return [], 0.0, 0.0
+    if not tokens:
+        raise ValueError("the prompt must contain at least one token")
     if len(tokens) + max_new > model.max_seq:
         raise ValueError(
             f"{len(tokens)} prompt + {max_new} new tokens exceed max_seq {model.max_seq}"
@@ -132,6 +134,8 @@ def speculate(model, mtp, tokens, max_new, k=2, stop=(), on_token=None):
     check_count(max_new)
     if max_new == 0:
         return [], 0.0, 0.0, []
+    if not tokens:
+        raise ValueError("the prompt must contain at least one token")
     import ttnn
 
     if len(tokens) + max_new + k > model.max_seq:
