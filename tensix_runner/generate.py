@@ -157,19 +157,22 @@ def speculate(model, mtp, tokens, max_new, k=2, stop=(), on_token=None):
         m = 0
         while m < k and drafts[m] == ver[m]:
             m += 1
-        model.commit(m + 1)
-        new = ver[: m + 1]
-        kept.append(m)
-        for t in new:
-            if len(out) < max_new and out[-1] not in stop:
-                out.append(t)
-                if on_token:
-                    on_token(t)
+        a = 0  # the rows emitted: the accepted drafts and the next token, up to max_new or a stop
+        for t in ver[: m + 1]:
+            if len(out) >= max_new or out[-1] in stop:
+                break
+            out.append(t)
+            a += 1
+            if on_token:
+                on_token(t)
+        new = out[len(out) - a :]
+        model.commit(a)  # only what was returned: the state never runs ahead of the output
+        kept.append(a - 1)
         if len(out) >= max_new or out[-1] in stop:  # no drafts needed after the last round
             ttnn.deallocate(xv)
             break
-        rows = ttnn.slice(xv, [0, 0, 0, 0], [1, 1, m + 1, xv.shape[-1]])
+        rows = ttnn.slice(xv, [0, 0, 0, 0], [1, 1, a, xv.shape[-1]])
         drafts = mtp.draft(rows, new, p, k)
         ttnn.deallocate(xv)
-        p += m + 1
+        p += a
     return out, t1 - t0, time.perf_counter() - t1, kept

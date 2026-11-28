@@ -66,12 +66,45 @@ def test_qwen35_prefill_normalizes_q_and_k(fake_ttnn, monkeypatch):
 # speculation -----------------------------------------------------------------------------------
 
 
+class SpecModel:
+    """A model whose verify returns the drafts it was given plus one more token, all accepted."""
+
+    max_seq = 256
+
+    def __init__(self, first=5):
+        self.first, self.commits = first, []
+
+    def prefill_hidden(self, tokens):
+        return self.first, MagicMock()
+
+    def verify(self, rows, p):
+        return [100 + i for i in range(len(rows))], MagicMock()
+
+    def commit(self, n):
+        self.commits.append(n)
 
 
+class SpecMtp:
+    def __init__(self):
+        self.calls = 0
+
+    def draft(self, x, toks, p, k):
+        self.calls += 1
+        return [100 + i for i in range(k)]
 
 
+def test_speculate_commits_only_the_returned_rows(fake_ttnn):
+    model, mtp = SpecModel(), SpecMtp()
+    out, _, _, kept = g.speculate(model, mtp, [1, 2, 3], max_new=2, k=3)
+    assert out == [5, 100]
+    assert model.commits == [1] and kept == [0]  # not 4 rows committed and 3 drafts kept
 
 
+def test_speculate_commits_up_to_a_stop_token(fake_ttnn):
+    model, mtp = SpecModel(), SpecMtp()
+    out, _, _, kept = g.speculate(model, mtp, [1, 2, 3], max_new=10, k=3, stop={101})
+    assert out == [5, 100, 101]
+    assert model.commits == [2] and kept == [1]
 
 
 
