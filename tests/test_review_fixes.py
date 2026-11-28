@@ -191,3 +191,9 @@ def test_user_grid_is_row_major_over_the_device(device):
             ops.user_grid(device, users)
 
 
+def test_compute_config_is_made_once():
+    _ttnn()
+    from tensix_runner import ops
+
+    assert ops.compute_config("hifi4") is ops.compute_config("hifi4")
+    assert ops.compute_config("hifi2") is not ops.compute_config("hifi4")
