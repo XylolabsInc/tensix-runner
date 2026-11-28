@@ -4,9 +4,13 @@
 permuted head with tables() equals transformers' rotation of the first rotary channels, and the
 permutation moves whole tiles of 32 channels (so permuted BFP weights stay exact)."""
 
+import sys
+import types
+
+import pytest
 import torch
 
-from tensix_runner.models.qwen35 import head_perm, permute_heads, tables
+from tensix_runner.models.qwen35 import Qwen35, head_perm, permute_heads, tables
 from tensix_runner.rope import inv_freq
 
 
@@ -56,3 +60,18 @@ def test_permutation_moves_whole_tiles():
     w = torch.arange(2 * d * 3, dtype=torch.float32).reshape(2 * d, 3)
     p = permute_heads(w, d, perm)
     assert torch.equal(p[:d], w[:d][perm]) and torch.equal(p[d:], w[d:][perm])
+
+
+def test_traced_decode_is_rejected_before_device_setup(monkeypatch):
+    monkeypatch.delitem(sys.modules, "ttnn", raising=False)
+    with pytest.raises(NotImplementedError, match="traced decode"):
+        Qwen35(None, None, trace=True)
+
+
+def test_eager_constructor_reaches_device_check(monkeypatch):
+    ttnn = types.ModuleType("ttnn")
+    ttnn.device = types.SimpleNamespace(Arch=types.SimpleNamespace(BLACKHOLE="blackhole"))
+    monkeypatch.setitem(sys.modules, "ttnn", ttnn)
+    device = types.SimpleNamespace(arch=lambda: "wormhole")
+    with pytest.raises(NotImplementedError, match="Blackhole"):
+        Qwen35(None, device, trace=False)
