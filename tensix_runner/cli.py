@@ -28,6 +28,17 @@ def ints(s):
     return {int(x) for x in s.split(",") if x != ""}
 
 
+
+def _check_layers(ex, layers):
+    if layers is None:
+        return
+    count = ex.text_config["num_hidden_layers"]
+    for layer in sorted(layers):
+        if not 0 <= layer < count:
+            raise SystemExit(f"layer {layer} is outside 0..{count - 1}")
+        if not any(i == layer for i, _ in ex.formats):
+            raise SystemExit(f"layer {layer} has no matrices in the manifest")
+
 def _download_layout(files, variant):
     """Return the download patterns and folder, both None for a root export."""
     root_export = "quant4.json" in files
@@ -90,6 +101,7 @@ def cmd_check(a):
 
     ex = Export(a.export)
     layers = ints(a.layers) if a.layers else None
+    _check_layers(ex, layers)
     head = ex.head_name  # a head the manifest names but the checkpoint lacks stops here
     dev = None
     if a.host:
@@ -173,6 +185,7 @@ def cmd_pcc(a):
 
     ex = Export(a.export)
     layers = sorted(ints(a.layers)) if a.layers else None
+    _check_layers(ex, layers)
     n = a.prefill + a.decode + (1 if a.mtp else 0)  # the MTP check reads one token past the prompt
     tokens = pcc.prompt_tokens(ex, n)
     dev = open_device(a.device_id)

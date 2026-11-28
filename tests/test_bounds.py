@@ -341,3 +341,11 @@ def test_pcc_rejects_invalid_counts(cli_env, args):
     with pytest.raises(SystemExit):
         run_cli("pcc", "exp", "--greedy", "1", *args)
     assert cli_env.opened == []
+
+
+def test_layer_selection_rejects_invalid_and_missing_layers():
+    ex = types.SimpleNamespace(text_config={"num_hidden_layers": 3}, formats={(0, "p"): "bf16"})
+    cli._check_layers(ex, {0})
+    for layer in (-1, 1, 3):
+        with pytest.raises(SystemExit, match="layer"):
+            cli._check_layers(ex, {layer})
