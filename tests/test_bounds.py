@@ -379,7 +379,10 @@ def test_load_failure_closes_export_even_if_device_close_fails(cli_env, monkeypa
 
 def test_run_closes_export_even_if_device_close_fails(cli_env, monkeypatch, ttnn_stub):
     _run_env(cli_env, monkeypatch)
-    monkeypatch.setattr(ttnn_stub, "close_device", lambda dev: (_ for _ in ()).throw(RuntimeError("close")))
+    def fail_close(dev):
+        raise RuntimeError("close")
+
+    monkeypatch.setattr(ttnn_stub, "close_device", fail_close)
     with pytest.raises(RuntimeError, match="close"):
         run_cli("run", "exp", "hi", "--max-new", "0")
     assert cli_env.closed == ["export"]
@@ -390,8 +393,10 @@ def test_load_failure_and_success_close_resources(cli_env, monkeypatch, ttnn_stu
     monkeypatch.setattr(ttnn_stub, "close_device", devices.append)
     models = sys.modules["tensix_runner.models"]
     load = models.load
+
     def fail_load(*args, **kwargs):
         raise ValueError("load failed")
+
     monkeypatch.setattr(models, "load", fail_load)
     with pytest.raises(ValueError, match="load failed"):
         run_cli("run", "exp", "hi")

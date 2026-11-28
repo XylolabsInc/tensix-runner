@@ -28,7 +28,6 @@ def ints(s):
     return {int(x) for x in s.split(",") if x != ""}
 
 
-
 def _check_layers(ex, layers):
     if layers is None:
         return
@@ -40,6 +39,7 @@ def _check_layers(ex, layers):
             raise SystemExit(f"layer {layer} is outside 0..{count - 1}")
         if not any(i == layer for i, _ in ex.formats):
             raise SystemExit(f"layer {layer} has no matrices in the manifest")
+
 
 def _download_layout(files, variant):
     """Return the download patterns and folder, both None for a root export."""
