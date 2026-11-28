@@ -185,6 +185,31 @@ def test_pcc_sizes_the_cache_without_an_unused_k(monkeypatch, fake_ttnn):
     assert seen["max_seq"] == 256, seen
 
 
+def test_bench_warms_every_shape_and_a_decode_before_timing(monkeypatch, fake_ttnn):
+    from tensix_runner import export
+
+    events = []
+
+    class M:
+        def prefill(self, ids):
+            events.append(("prefill", len(ids)))
+            return 1
+
+        def decode(self, t, pos):
+            events.append(("decode", pos))
+            return 1
+
+    clock = iter(range(1000))
+    monkeypatch.setattr(cli.time, "perf_counter", lambda: next(clock))
+    ex = SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(export, "Export", lambda path: ex)
+    tok = SimpleNamespace(encode=lambda *a, **k: SimpleNamespace(ids=[1] * 600))
+    monkeypatch.setattr(g, "tokenizer", lambda ex: tok)
+    monkeypatch.setattr(cli, "_open_model", lambda a, ex=None: (ex, object(), M()))
+    cli.main(["bench", "x", "--pp", "64,512", "--tg", "2", "--repeat", "1"])
+    warm = events[:4]
+    assert [e[0] for e in warm] == ["prefill", "prefill", "prefill", "decode"], events
+    assert {e[1] for e in warm[:2]} == {64, 512}
 
 
 # device ----------------------------------------------------------------------------------------

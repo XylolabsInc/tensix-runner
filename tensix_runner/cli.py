@@ -458,7 +458,12 @@ def cmd_bench(a):
             )
     ex, dev, model = _open_model(a, ex)
     try:
-        model.prefill(ids[:32])  # compile the programs once, untimed
+        # compile every program once, untimed: each prefill length, then a decode step (with
+        # --trace its capture too), whose state the measured runs reset by prefilling again
+        for n in pps:
+            model.prefill(ids[:n])
+        t = model.prefill(ids[: max(depths[0], 1)])
+        model.decode(t, max(depths[0], 1))
         print("| test | depth | tok/s | runs |\n|---|---:|---:|---:|")
         for n in pps:
             rates = []
