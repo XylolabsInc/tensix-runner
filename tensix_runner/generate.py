@@ -80,9 +80,11 @@ def stop_ids(export):
 
 
 def check_count(max_new):
-    """max_new, a count of new tokens: not negative (ValueError)."""
-    if max_new < 0:
-        raise ValueError(f"max_new is {max_new}: the number of new tokens cannot be negative")
+    """max_new, a count of new tokens: an integer, not negative (ValueError)."""
+    if isinstance(max_new, bool) or not isinstance(max_new, int) or max_new < 0:
+        raise ValueError(
+            f"max_new is {max_new!r}: the number of new tokens must be a non-negative integer"
+        )
 
 
 def check_k(k, kernels_head=False):

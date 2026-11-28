@@ -79,6 +79,12 @@ def test_qwen35_prefill_normalizes_q_and_k(fake_ttnn, monkeypatch):
 # token counts ----------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("bad", [1.5, True, None, -1, "3"])
+def test_check_count_requires_a_nonnegative_integer(bad):
+    with pytest.raises(ValueError, match="max_new"):
+        g.check_count(bad)
+    g.check_count(0)
+    g.check_count(7)
 
 
 # the stream ------------------------------------------------------------------------------------
