@@ -184,13 +184,14 @@ def cmd_pcc(a):
     from .models import load
 
     ex = Export(a.export)
-    layers = sorted(ints(a.layers)) if a.layers else None
-    _check_layers(ex, layers)
-    n = a.prefill + a.decode + (1 if a.mtp else 0)  # the MTP check reads one token past the prompt
-    tokens = pcc.prompt_tokens(ex, n)
-    dev = open_device(a.device_id)
+    dev = None
     bad = []
     try:
+        layers = sorted(ints(a.layers)) if a.layers else None
+        _check_layers(ex, layers)
+        n = a.prefill + a.decode + (1 if a.mtp else 0)  # MTP reads one token past the prompt
+        tokens = pcc.prompt_tokens(ex, n)
+        dev = open_device(a.device_id)
         print(f"device: {info(dev)}", flush=True)
         t0 = time.monotonic()
         # the whole model for greedy tokens, else only the layers compared (a verify check takes
@@ -275,7 +276,8 @@ def cmd_pcc(a):
             if wrong:
                 bad.append("greedy")
     finally:
-        ttnn.close_device(dev)
+        if dev is not None:
+            ttnn.close_device(dev)
         ex.close()
     print(f"{len(bad)} below the bar {a.bar}" + (f": {bad}" if bad else ""))
     return 1 if bad else 0
