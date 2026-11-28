@@ -220,7 +220,12 @@ def cmd_pcc(a):
             ex,
             dev,
             max_seq=max(
-                256, -(-max(n + a.verify + a.spec + a.k + 1, a.prefill + a.greedy) // 32) * 32
+                256,
+                -(
+                    -max(n + a.verify + a.spec + (a.k if a.spec else 0) + 1, a.prefill + a.greedy)
+                    // 32
+                )
+                * 32,
             ),
             layers=None
             if a.greedy or a.drift or ((a.verify or a.spec) and not layers)

@@ -162,6 +162,27 @@ def test_pcc_keeps_layers_as_a_selector(monkeypatch):
     assert len(called) == 2
 
 
+def test_pcc_sizes_the_cache_without_an_unused_k(monkeypatch, fake_ttnn):
+    from tensix_runner import device, export, models, pcc
+
+    class Stop(Exception):
+        pass
+
+    seen = {}
+
+    def load(ex, dev, **kw):
+        seen.update(kw)
+        raise Stop
+
+    ex = SimpleNamespace(close=lambda: None, text_config={"num_hidden_layers": 2}, formats=[])
+    monkeypatch.setattr(export, "Export", lambda path: ex)
+    monkeypatch.setattr(device, "open_device", lambda *a, **k: object())
+    monkeypatch.setattr(device, "info", lambda dev: "fake")
+    monkeypatch.setattr(models, "load", load)
+    monkeypatch.setattr(pcc, "prompt_tokens", lambda ex, n: [1] * n)
+    with pytest.raises(Stop):
+        cli.main(["pcc", "x", "--greedy", "1", "--k", "1000000"])
+    assert seen["max_seq"] == 256, seen
 
 
 
