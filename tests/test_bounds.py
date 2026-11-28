@@ -334,3 +334,10 @@ def test_bench_rejects_invalid_counts(bench_env, option, value):
     with pytest.raises(SystemExit, match=option):
         run_cli("bench", "exp", option, value)
     assert bench_env.opened == []
+
+
+@pytest.mark.parametrize("args", [["--verify", "1"], ["--decode", "-1"], ["--spec", "-1"], ["--window", "-1"], ["--layers", "0", "--prefill", "31"], ["--prefill", "0"]])
+def test_pcc_rejects_invalid_counts(cli_env, args):
+    with pytest.raises(SystemExit):
+        run_cli("pcc", "exp", "--greedy", "1", *args)
+    assert cli_env.opened == []

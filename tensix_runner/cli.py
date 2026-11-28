@@ -137,6 +137,16 @@ def cmd_check(a):
 
 def _check_pcc_args(a):
     """Refuse a pcc command line that checks nothing or counts wrongly, before a device opens."""
+    if a.prefill < 1 or ((a.layers or a.drift) and a.prefill % 32):
+        raise SystemExit(f"--prefill is {a.prefill}: it must be positive and a multiple of 32 for layer checks")
+    for option in ("decode", "spec", "verify", "window"):
+        value = getattr(a, option)
+        if value < 0:
+            raise SystemExit(f"--{option} is {value}: it must be 0 or more")
+    if a.verify == 1 or a.verify > (8 if a.kernels else 32):
+        raise SystemExit("--verify must be 0 or between 2 and the supported row limit")
+    if a.mtp and not 1 < a.prefill <= (8 if a.kernels else 32):
+        raise SystemExit("--mtp requires --prefill between 2 and the supported row limit")
     if a.greedy < 0:
         raise SystemExit(f"--greedy is {a.greedy}: it must be 0 or more")
     if not (a.layers or a.greedy or a.verify or a.spec or a.drift or a.mtp):
@@ -147,7 +157,7 @@ def _check_pcc_args(a):
         from .generate import check_k
 
         try:
-            check_k(a.k)
+            check_k(a.k, bool(a.kernels))
         except ValueError as e:
             raise SystemExit(f"--k: {e}") from None
 
