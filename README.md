@@ -28,7 +28,7 @@ prediction run on the device; the host tokenizes and schedules.
 | Family | Exports | Chips |
 |---|---|---|
 | Qwen3 | Qwen3-4B, Qwen3-8B | Blackhole, Wormhole |
-| Qwen3.5 (MTP drafting checked with `pcc --spec`) | Qwen3.5-4B, Qwen3.5-9B | Blackhole |
+| Qwen3.5 (with MTP drafting) | Qwen3.5-4B, Qwen3.5-9B | Blackhole |
 | Gemma 4 | gemma-4-E2B, gemma-4-E4B | Blackhole, Wormhole |
 
 Tested on [ttsim](https://github.com/tenstorrent/ttsim) v1.16.0, Tenstorrent's simulator, not yet on
