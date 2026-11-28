@@ -107,6 +107,13 @@ def test_speculate_commits_up_to_a_stop_token(fake_ttnn):
     assert model.commits == [2] and kept == [1]
 
 
+def test_speculate_drafts_nothing_when_prefill_completes(fake_ttnn):
+    model, mtp = SpecModel(), SpecMtp()
+    seen = []
+    out, _, _, kept = g.speculate(model, mtp, [1, 2, 3], max_new=1, k=3, on_token=seen.append)
+    assert (out, kept, seen, mtp.calls, model.commits) == ([5], [], [5], 0, [])
+    out, _, _, kept = g.speculate(model, mtp, [1, 2, 3], max_new=9, k=3, stop={5})
+    assert (out, kept, mtp.calls) == ([5], [], 0)
 
 
 # token counts ----------------------------------------------------------------------------------

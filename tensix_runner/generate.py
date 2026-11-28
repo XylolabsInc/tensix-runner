@@ -146,6 +146,12 @@ def speculate(model, mtp, tokens, max_new, k=2, stop=(), on_token=None):
         )
     t0 = time.perf_counter()
     first, x = model.prefill_hidden(tokens)
+    if max_new == 1 or first in stop:  # complete already: no drafts are needed
+        ttnn.deallocate(x)
+        t1 = time.perf_counter()
+        if on_token:
+            on_token(first)
+        return [first], t1 - t0, 0.0, []
     drafts = mtp.draft(x, list(tokens[1:]) + [first], 0, k)
     ttnn.deallocate(x)
     t1 = time.perf_counter()
