@@ -167,6 +167,20 @@ def _check_pcc_args(a):
         raise SystemExit("--mtp requires --prefill between 2 and the supported row limit")
     if a.greedy < 0:
         raise SystemExit(f"--greedy is {a.greedy}: it must be 0 or more")
+    # one primary check a run (--greedy runs after it): --layers only selects for --spec and --verify
+    primary = [
+        name
+        for name, on in (
+            ("--mtp", a.mtp),
+            ("--spec", a.spec),
+            ("--verify", a.verify),
+            ("--drift", a.drift),
+            ("--layers", a.layers and not (a.spec or a.verify)),
+        )
+        if on
+    ]
+    if len(primary) > 1:
+        raise SystemExit(f"pcc runs one of --mtp, --spec, --verify, --drift, --layers: {primary}")
     if not (a.layers or a.greedy or a.verify or a.spec or a.drift or a.mtp):
         raise SystemExit(
             "pcc checks nothing: give one of --layers, --greedy, --verify, --spec, --drift, --mtp"

@@ -139,8 +139,27 @@ def test_check_count_requires_a_nonnegative_integer(bad):
 # pcc and bench ---------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--spec", "4", "--mtp"],
+        ["--spec", "4", "--verify", "4"],
+        ["--verify", "4", "--drift"],
+        ["--drift", "--layers", "0"],
+        ["--mtp", "--layers", "0"],
+    ],
+)
+def test_pcc_rejects_combined_primary_checks(extra):
+    with pytest.raises(SystemExit, match="runs one of"):
+        cli.main(["pcc", "no-such-export", *extra])
 
 
+def test_pcc_keeps_layers_as_a_selector(monkeypatch):
+    called = []
+    monkeypatch.setattr(cli, "cmd_pcc", lambda a: called.append(a) or 0)
+    for extra in (["--spec", "4", "--layers", "0"], ["--verify", "4", "--layers", "0"]):
+        assert cli.main(["pcc", "x", *extra]) == 0
+    assert len(called) == 2
 
 
 
