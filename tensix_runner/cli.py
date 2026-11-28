@@ -253,6 +253,7 @@ def cmd_pcc(a):
                 bad.append("greedy")
     finally:
         ttnn.close_device(dev)
+        ex.close()
     print(f"{len(bad)} below the bar {a.bar}" + (f": {bad}" if bad else ""))
     return 1 if bad else 0
 
@@ -280,12 +281,21 @@ def _open_model(a, ex=None):
 
     ex = ex or Export(a.export)
     trace = getattr(a, "trace", False)
-    dev = open_device(a.device_id, trace_region_size=a.trace_mb << 20 if trace else 0)
-    print(f"device: {info(dev)}", flush=True)
-    t0 = time.monotonic()
-    model = load(ex, dev, max_seq=a.max_seq, trace=trace)
-    print(f"{ex.root.name} loaded in {time.monotonic() - t0:.0f} s", flush=True)
-    return ex, dev, model
+    dev = None
+    try:
+        dev = open_device(a.device_id, trace_region_size=a.trace_mb << 20 if trace else 0)
+        print(f"device: {info(dev)}", flush=True)
+        t0 = time.monotonic()
+        model = load(ex, dev, max_seq=a.max_seq, trace=trace)
+        print(f"{ex.root.name} loaded in {time.monotonic() - t0:.0f} s", flush=True)
+        return ex, dev, model
+    except BaseException:
+        if dev is not None:
+            import ttnn
+
+            ttnn.close_device(dev)
+        ex.close()
+        raise
 
 
 def _summary(out, t_pf, t_dec, n_prompt, trace=False):
@@ -315,6 +325,7 @@ def cmd_run(a):
         print("\n" + _summary(out, t_pf, t_dec, len(ids), a.trace), flush=True)
     finally:
         ttnn.close_device(dev)
+        ex.close()
     return 0
 
 
@@ -344,6 +355,7 @@ def cmd_chat(a):
             msgs.append({"role": "assistant", "content": s.shown})
     finally:
         ttnn.close_device(dev)
+        ex.close()
     return 0
 
 
@@ -398,6 +410,7 @@ def cmd_bench(a):
         print(("traced decode" if a.trace else "eager (no trace)") + "; one user")
     finally:
         ttnn.close_device(dev)
+        ex.close()
     return 0
 
 

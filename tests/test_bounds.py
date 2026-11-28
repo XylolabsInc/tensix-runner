@@ -139,6 +139,9 @@ def cli_env(monkeypatch, ttnn_stub):
         def __init__(self, path):
             self.root, self.text_config = Path(path), {}
 
+        def close(self):
+            pass
+
     for name, attrs in {
         "tensix_runner.device": {"open_device": open_device, "info": lambda d: "stub"},
         "tensix_runner.models": {"load": load},
