@@ -86,24 +86,25 @@ def reference(export, tokens, layers, overrides=None):
 
 def greedy_reference(export, tokens, n, overrides=None):
     """transformers' greedy continuation (n tokens) in float32 on the CPU, and each step's logits
-    [vocab] before any final softcap (Gemma's tanh(x / cap) * cap is undone). An end-of-sequence
-    token does not end the generation early: exactly n tokens and n logits rows come back."""
+    [vocab] before any final softcap (Gemma's tanh(x / cap) * cap is undone). Each token is the
+    argmax of its own logits row, stepping the model on its KV cache, so an end-of-sequence token
+    does not end the generation early and is never masked: exactly n tokens and n logits rows come
+    back."""
     m = _hf_model(export, overrides)
+    ids, past, want, rows = torch.tensor([tokens]), None, [], []
     with torch.no_grad():
-        out = m.generate(
-            torch.tensor([tokens]),
-            max_new_tokens=n,
-            min_new_tokens=n,
-            do_sample=False,
-            output_logits=True,
-            return_dict_in_generate=True,
-        )
+        for _ in range(n):
+            r = m(input_ids=ids, past_key_values=past, use_cache=True)
+            past = r.past_key_values
+            rows.append(r.logits[0, -1])
+            want.append(int(rows[-1].argmax()))
+            ids = torch.tensor([[want[-1]]])
     cap = export.text_config.get("final_logit_softcapping")
     logits = []
-    for row in out.logits:
-        x = row[0].double()
+    for row in rows:
+        x = row.double()
         logits.append(cap * torch.atanh(x / cap) if cap else x)
-    return out.sequences[0, len(tokens) :].tolist(), logits
+    return want, logits
 
 
 def bf16_ulp(x):
@@ -115,7 +116,8 @@ def bf16_ulp(x):
 def compare_greedy(got, want, logits):
     """Step by step, the device's token against transformers' (the device decoding transformers'
     tokens, so one difference does not shift the rest). A difference counts as a tie when the two
-    tokens' logits in transformers lie within one bfloat16 step of each other. Returns
+    tokens' logits in transformers lie within one bfloat16 step of each other, the device's token
+    not above transformers' (a negative or non-finite gap is a difference). Returns
     (equal steps, ties [(step, device, transformers, gap)], other differences [same]). The three
     inputs must have the same length (ValueError)."""
     if not len(got) == len(want) == len(logits):
@@ -129,7 +131,7 @@ def compare_greedy(got, want, logits):
             same += 1
             continue
         gap = float(logits[k][w] - logits[k][g])
-        (ties if gap <= bf16_ulp(logits[k][w]) else wrong).append((k, g, w, round(gap, 4)))
+        (ties if 0 <= gap <= bf16_ulp(logits[k][w]) else wrong).append((k, g, w, round(gap, 4)))
     return same, ties, wrong
 
 

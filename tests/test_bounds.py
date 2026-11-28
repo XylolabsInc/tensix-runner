@@ -184,31 +184,26 @@ def test_mtp_check_gets_one_token_past_the_prompt(cli_env, monkeypatch):
 
 
 class FakeHF:
-    """transformers' generate on a two-token vocabulary: ends at an end-of-sequence token after
-    two tokens unless min_new_tokens says otherwise."""
+    """transformers' model on a ten-token vocabulary: step i's logits peak at 5, EOS, 5, 5, ...
+    (the end-of-sequence token is the raw argmax at step 1)."""
 
     def __init__(self):
-        self.kw = None
+        self.steps = 0
 
-    def generate(self, ids, max_new_tokens, min_new_tokens=0, **kw):
-        self.kw = {"max_new_tokens": max_new_tokens, "min_new_tokens": min_new_tokens}
-        n = max_new_tokens if min_new_tokens >= max_new_tokens else min(2, max_new_tokens)
-        seq = [5, EOS] + [5] * (n - 2)
-        rows = [torch.zeros(1, 10) for _ in range(n)]
-        for r, t in zip(rows, seq):
-            r[0, t] = 3.0
-        return types.SimpleNamespace(
-            sequences=torch.tensor([ids[0].tolist() + seq[:n]]), logits=tuple(rows)
-        )
+    def __call__(self, input_ids, past_key_values=None, use_cache=False):
+        row = torch.zeros(1, 1, 10)
+        row[0, 0, [5, EOS][self.steps] if self.steps < 2 else 5] = 3.0
+        self.steps += 1
+        return types.SimpleNamespace(logits=row, past_key_values=object())
 
 
 def test_reference_does_not_stop_early(monkeypatch):
-    hf = FakeHF()
-    monkeypatch.setattr(pcc, "_hf_model", lambda export, overrides=None: hf)
+    monkeypatch.setattr(pcc, "_hf_model", lambda export, overrides=None: FakeHF())
     export = types.SimpleNamespace(text_config={})
     want, logits = pcc.greedy_reference(export, [1, 2, 3], 8)
     assert len(want) == 8 and len(logits) == 8
-    assert hf.kw["min_new_tokens"] == 8
+    assert want[:3] == [5, EOS, 5]
+    assert all(t == int(row.argmax()) for t, row in zip(want, logits))
 
 
 def test_greedy_runs_every_step_past_an_end_of_sequence_token(cli_env, monkeypatch, capsys):
